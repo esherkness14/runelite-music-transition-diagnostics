@@ -17,7 +17,9 @@ import net.runelite.api.Player;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ClientTick;
 import net.runelite.api.events.VarbitChanged;
+import net.runelite.api.events.VarClientIntChanged;
 import net.runelite.api.gameval.InterfaceID;
+import net.runelite.api.gameval.VarClientID;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.eventbus.Subscribe;
@@ -57,7 +59,7 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 	@Inject
 	private Client client;
 
-	/** Last ClientTick sample. Null means that the next sample establishes a baseline. */
+	/** Last ClientTick sample. Null means that the next sample emits the baseline. */
 	private MusicState previousState;
 
 	@Override
@@ -97,19 +99,39 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 	}
 
 	/**
-	 * ClientTick runs about every 20 ms. Sampling is intentionally cheap, and
-	 * the plugin writes no polling log line unless at least one requested value
-	 * differs from the previous sample. Each field gets its own line so ordering
-	 * and timestamps remain easy to compare during the experiment.
+	 * VarClientIntChanged identifies the changed varclient by index, but does not
+	 * carry its new value. Read the value immediately so its event ordering can
+	 * be compared with both VarbitChanged and the next ClientTick snapshot.
+	 */
+	@Subscribe
+	public void onVarClientIntChanged(VarClientIntChanged event)
+	{
+		if (!isObservedMusicVarClient(event.getIndex()))
+		{
+			return;
+		}
+
+		logDiagnostic(
+			"VARCLIENT_INT_CHANGED",
+			"index=" + event.getIndex()
+				+ " value=" + client.getVarcIntValue(event.getIndex()));
+	}
+
+	/**
+	 * ClientTick runs about every 20 ms. Sampling is intentionally cheap. After
+	 * one complete baseline line, the plugin writes no polling log line unless
+	 * at least one requested value differs from the previous sample. Each field
+	 * gets its own line so ordering and timestamps remain easy to compare.
 	 */
 	@Subscribe
 	public void onClientTick(ClientTick event)
 	{
 		MusicState currentState = readMusicState();
 
-		// The first tick is a silent baseline, not a transition.
+		// The first tick is a single complete baseline, not a set of changes.
 		if (previousState == null)
 		{
+			logDiagnostic("BASELINE", currentState.toDiagnosticString());
 			previousState = currentState;
 			return;
 		}
@@ -118,13 +140,29 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 		logIntChange("VARP_MUSICLOOP", previousState.musicLoop, currentState.musicLoop);
 		logIntChange("VARP_MUSICMULTI_1", previousState.musicMulti1, currentState.musicMulti1);
 		logIntChange("VARP_MUSICMULTI_2", previousState.musicMulti2, currentState.musicMulti2);
+		logIntChange("VARP_MUSIC_CURRENT_TRACK", previousState.musicCurrentTrack, currentState.musicCurrentTrack);
+		logIntChange("VARP_MUSIC_LAST_TRACK", previousState.musicLastTrack, currentState.musicLastTrack);
+		logIntChange("VARP_MUSIC_OVERRIDE_TRACK", previousState.musicOverrideTrack, currentState.musicOverrideTrack);
+		logIntChange("VARP_MUSIC_OVERRIDE_AREA", previousState.musicOverrideArea, currentState.musicOverrideArea);
+		logIntChange(
+			"VARP_MUSIC_PLAYER_COLOUR_PLAYING",
+			previousState.musicPlayerColourPlaying,
+			currentState.musicPlayerColourPlaying);
+		logIntChange(
+			"VARCLIENT_MUSIC_CLIENT_SYNC_TIMER_LAST_INTERVAL",
+			previousState.musicClientSyncTimerLastInterval,
+			currentState.musicClientSyncTimerLastInterval);
+		logIntChange(
+			"VARCLIENT_MUSIC_CLIENT_SYNC_TIMER_TIME_PER_INTERVAL",
+			previousState.musicClientSyncTimerTimePerInterval,
+			currentState.musicClientSyncTimerTimePerInterval);
 		logStringChange("NOW_PLAYING_TEXT", previousState.nowPlayingText, currentState.nowPlayingText);
 		logIntChange("MUSIC_VOLUME", previousState.musicVolume, currentState.musicVolume);
 
 		previousState = currentState;
 	}
 
-	/** Read only the six values requested by the experiment. */
+	/** Read all music values requested by the experiment without changing them. */
 	private MusicState readMusicState()
 	{
 		return new MusicState(
@@ -132,6 +170,13 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 			client.getVarpValue(VarPlayerID.MUSICLOOP),
 			client.getVarpValue(VarPlayerID.MUSICMULTI_1),
 			client.getVarpValue(VarPlayerID.MUSICMULTI_2),
+			client.getVarpValue(VarPlayerID.MUSIC_CURRENT_TRACK),
+			client.getVarpValue(VarPlayerID.MUSIC_LAST_TRACK),
+			client.getVarpValue(VarPlayerID.MUSIC_OVERRIDE_TRACK),
+			client.getVarpValue(VarPlayerID.MUSIC_OVERRIDE_AREA),
+			client.getVarpValue(VarPlayerID.MUSIC_PLAYER_COLOUR_PLAYING),
+			client.getVarcIntValue(VarClientID.MUSIC_CLIENT_SYNC_TIMER_LAST_INTERVAL),
+			client.getVarcIntValue(VarClientID.MUSIC_CLIENT_SYNC_TIMER_TIME_PER_INTERVAL),
 			readNowPlayingText(),
 			client.getMusicVolume());
 	}
@@ -148,7 +193,18 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 		return varpId == VarPlayerID.MUSICPLAY
 			|| varpId == VarPlayerID.MUSICLOOP
 			|| varpId == VarPlayerID.MUSICMULTI_1
-			|| varpId == VarPlayerID.MUSICMULTI_2;
+			|| varpId == VarPlayerID.MUSICMULTI_2
+			|| varpId == VarPlayerID.MUSIC_CURRENT_TRACK
+			|| varpId == VarPlayerID.MUSIC_LAST_TRACK
+			|| varpId == VarPlayerID.MUSIC_OVERRIDE_TRACK
+			|| varpId == VarPlayerID.MUSIC_OVERRIDE_AREA
+			|| varpId == VarPlayerID.MUSIC_PLAYER_COLOUR_PLAYING;
+	}
+
+	private static boolean isObservedMusicVarClient(int index)
+	{
+		return index == VarClientID.MUSIC_CLIENT_SYNC_TIMER_LAST_INTERVAL
+			|| index == VarClientID.MUSIC_CLIENT_SYNC_TIMER_TIME_PER_INTERVAL;
 	}
 
 	private void logIntChange(String changeType, int oldValue, int newValue)
@@ -213,6 +269,13 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 		private final int musicLoop;
 		private final int musicMulti1;
 		private final int musicMulti2;
+		private final int musicCurrentTrack;
+		private final int musicLastTrack;
+		private final int musicOverrideTrack;
+		private final int musicOverrideArea;
+		private final int musicPlayerColourPlaying;
+		private final int musicClientSyncTimerLastInterval;
+		private final int musicClientSyncTimerTimePerInterval;
 		private final String nowPlayingText;
 		private final int musicVolume;
 
@@ -221,6 +284,13 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 			int musicLoop,
 			int musicMulti1,
 			int musicMulti2,
+			int musicCurrentTrack,
+			int musicLastTrack,
+			int musicOverrideTrack,
+			int musicOverrideArea,
+			int musicPlayerColourPlaying,
+			int musicClientSyncTimerLastInterval,
+			int musicClientSyncTimerTimePerInterval,
 			String nowPlayingText,
 			int musicVolume)
 		{
@@ -228,8 +298,33 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 			this.musicLoop = musicLoop;
 			this.musicMulti1 = musicMulti1;
 			this.musicMulti2 = musicMulti2;
+			this.musicCurrentTrack = musicCurrentTrack;
+			this.musicLastTrack = musicLastTrack;
+			this.musicOverrideTrack = musicOverrideTrack;
+			this.musicOverrideArea = musicOverrideArea;
+			this.musicPlayerColourPlaying = musicPlayerColourPlaying;
+			this.musicClientSyncTimerLastInterval = musicClientSyncTimerLastInterval;
+			this.musicClientSyncTimerTimePerInterval = musicClientSyncTimerTimePerInterval;
 			this.nowPlayingText = nowPlayingText;
 			this.musicVolume = musicVolume;
+		}
+
+		/** A single-line dump used only by the first ClientTick BASELINE event. */
+		private String toDiagnosticString()
+		{
+			return "MUSICPLAY=" + musicPlay
+				+ " MUSICLOOP=" + musicLoop
+				+ " MUSICMULTI_1=" + musicMulti1
+				+ " MUSICMULTI_2=" + musicMulti2
+				+ " MUSIC_CURRENT_TRACK=" + musicCurrentTrack
+				+ " MUSIC_LAST_TRACK=" + musicLastTrack
+				+ " MUSIC_OVERRIDE_TRACK=" + musicOverrideTrack
+				+ " MUSIC_OVERRIDE_AREA=" + musicOverrideArea
+				+ " MUSIC_PLAYER_COLOUR_PLAYING=" + musicPlayerColourPlaying
+				+ " MUSIC_CLIENT_SYNC_TIMER_LAST_INTERVAL=" + musicClientSyncTimerLastInterval
+				+ " MUSIC_CLIENT_SYNC_TIMER_TIME_PER_INTERVAL=" + musicClientSyncTimerTimePerInterval
+				+ " NOW_PLAYING_TEXT=" + printable(nowPlayingText)
+				+ " MUSIC_VOLUME=" + musicVolume;
 		}
 	}
 }

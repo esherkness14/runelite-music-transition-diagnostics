@@ -20,16 +20,28 @@ IDs:
 - `VarPlayerID.MUSICLOOP`
 - `VarPlayerID.MUSICMULTI_1`
 - `VarPlayerID.MUSICMULTI_2`
+- `VarPlayerID.MUSIC_CURRENT_TRACK`
+- `VarPlayerID.MUSIC_LAST_TRACK`
+- `VarPlayerID.MUSIC_OVERRIDE_TRACK`
+- `VarPlayerID.MUSIC_OVERRIDE_AREA`
+- `VarPlayerID.MUSIC_PLAYER_COLOUR_PLAYING`
 
-It also samples the same four varps on every `ClientTick`, together with:
+It also watches these client-side integer variables through
+`VarClientIntChanged`:
+
+- `VarClientID.MUSIC_CLIENT_SYNC_TIMER_LAST_INTERVAL`
+- `VarClientID.MUSIC_CLIENT_SYNC_TIMER_TIME_PER_INTERVAL`
+
+It samples all of the above values on every `ClientTick`, together with:
 
 - the text of `InterfaceID.Music.NOW_PLAYING`; and
 - `client.getMusicVolume()`.
 
-The first client-tick sample establishes a silent baseline. After that, a
-polling log entry is emitted only for a value that actually changed. Relevant
-`VarbitChanged` events are logged immediately with `varpId`, `varbitId`, and
-the new event value.
+The first client-tick sample emits one `BASELINE` line containing every observed
+music value. After that, a polling log entry is emitted only for a value that
+actually changed. Relevant `VarbitChanged` events are logged immediately with
+`varpId`, `varbitId`, and the new event value. Relevant `VarClientIntChanged`
+events are logged immediately with their index and current value.
 
 Every diagnostic line includes an ISO-8601 UTC timestamp with millisecond
 precision, RuneLite tick count, player `WorldPoint`, region ID, event/change
@@ -68,8 +80,9 @@ compare:
 3. Cross back over the same boundary and note the resulting log lines.
 4. Separately, stand still until a song ends naturally and the next track is
    selected.
-5. Compare the ordering and timestamps of the varp, widget-text, and volume
-   changes for boundary-triggered transitions versus natural transitions.
+5. Compare the ordering and timestamps of the varp, varclient, widget-text, and
+   volume changes for boundary-triggered transitions versus natural
+   transitions.
 
 No music region is built into the plugin; choose any boundary you already know
 for the manual experiment.
@@ -85,7 +98,7 @@ Look for lines beginning with `[Music Transition Diagnostics]` in both:
 Example shape (illustrative values only):
 
 ```text
-[Music Transition Diagnostics] timestamp=2026-09-20T18:42:03.127Z tick=12345 worldPoint=WorldPoint(x=..., y=..., plane=0) regionId=... type=VARP_MUSICPLAY old=... -> new=...
+[Music Transition Diagnostics] timestamp=2026-09-20T18:42:03.127Z tick=12345 worldPoint=WorldPoint(x=..., y=..., plane=0) regionId=... type=VARP_MUSIC_CURRENT_TRACK old=... -> new=...
 ```
 
 ## Build and test
@@ -98,4 +111,3 @@ The test source set contains the standard development-client launcher used by
 the `run` task. There are no behavioral unit tests because the experiment
 depends on live client events and a player manually crossing a boundary or
 waiting for a track to finish.
-
