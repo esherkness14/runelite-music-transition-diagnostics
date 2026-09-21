@@ -7,9 +7,10 @@ transitions:
 - an area-triggered transition caused by crossing a music-area boundary; and
 - a natural transition after the current track reaches its end.
 
-It does **not** fade music, change volume, select tracks, stop playback, or
-contain a table of RuneScape music regions. The plugin only observes client
-state and logs changes.
+It does **not** fade music, change volume, select tracks, stop playback, run
+scripts, or contain a table of RuneScape music regions. The plugin only observes
+client state and logs changes. Confirmed observations and current hypotheses are
+kept in [`RESEARCH-NOTES.md`](RESEARCH-NOTES.md).
 
 ## What is recorded
 
@@ -25,6 +26,9 @@ IDs:
 - `VarPlayerID.MUSIC_OVERRIDE_TRACK`
 - `VarPlayerID.MUSIC_OVERRIDE_AREA`
 - `VarPlayerID.MUSIC_PLAYER_COLOUR_PLAYING`
+- `VarPlayerID.MUSIC_CURRENT_ID`
+- `VarPlayerID.MUSIC_CURRENT_ID_REMEMBERED`
+- `VarPlayerID.MUSIC_NEXT_ID_REMEMBERED`
 
 It also watches these client-side integer variables through
 `VarClientIntChanged`:
@@ -46,6 +50,28 @@ events are logged immediately with their index and current value.
 Every diagnostic line includes an ISO-8601 UTC timestamp with millisecond
 precision, RuneLite tick count, player `WorldPoint`, region ID, event/change
 type, and an old-to-new value when the line represents a sampled change.
+
+## Bounded script context
+
+The plugin observes `ScriptPreFired` and `ScriptPostFired`, but it does not dump
+them continuously. Instead, it keeps only a 500 ms, 256-entry rolling buffer in
+memory. When `MUSIC_CURRENT_TRACK` changes, the plugin:
+
+1. emits `SCRIPT_CONTEXT_BEFORE_BEGIN`;
+2. dumps the buffered script IDs under `SCRIPT_CONTEXT_BEFORE`;
+3. emits `SCRIPT_CONTEXT_BEFORE_END` and `SCRIPT_CONTEXT_AFTER_BEGIN`;
+4. logs new script events under `SCRIPT_CONTEXT_AFTER` for about 500 ms; and
+5. emits `SCRIPT_CONTEXT_AFTER_END`.
+
+Every context line identifies the old and new track values. Individual script
+lines contain phase (`PRE` or `POST`), script ID, original timestamp, elapsed
+milliseconds relative to the detected track change, and the original RuneLite
+tick count. The after-window is capped at 256 emitted events and reports whether
+it was truncated.
+
+No script arguments, stacks, or return values are inspected. The purpose is to
+find a repeatable script immediately before an area-triggered replacement; a
+candidate script can be investigated separately in a later experiment.
 
 ## Run the development client
 
@@ -76,16 +102,19 @@ Use one continuous client session so the timestamps and tick counts are easy to
 compare:
 
 1. Run the development client.
-2. Cross a known music-area boundary and note the resulting log lines.
-3. Cross back over the same boundary and note the resulting log lines.
+2. Cross the Draynor Manor gate music boundary and note the track change plus
+   its `SCRIPT_CONTEXT_BEFORE` and `SCRIPT_CONTEXT_AFTER` sections.
+3. Cross back over the same boundary and compare the script IDs and ordering.
 4. Separately, stand still until a song ends naturally and the next track is
    selected.
-5. Compare the ordering and timestamps of the varp, varclient, widget-text, and
-   volume changes for boundary-triggered transitions versus natural
+5. Compare the script context and the ordering of varp, varclient, widget-text,
+   and volume changes for boundary-triggered transitions versus natural
    transitions.
+6. Record confirmed results and revised hypotheses in `RESEARCH-NOTES.md`.
 
-No music region is built into the plugin; choose any boundary you already know
-for the manual experiment.
+No music region is built into the plugin. The Draynor Manor test already showed
+that a music boundary can occur within a single RuneScape region, so region IDs
+are not treated as a geographic fallback.
 
 ## Logs
 
@@ -95,10 +124,11 @@ Look for lines beginning with `[Music Transition Diagnostics]` in both:
 - RuneLite's `client.log` under `%USERPROFILE%\.runelite\logs` on Windows or
   `$HOME/.runelite/logs` on macOS/Linux.
 
-Example shape (illustrative values only):
+Example shapes (illustrative values only):
 
 ```text
-[Music Transition Diagnostics] timestamp=2026-09-20T18:42:03.127Z tick=12345 worldPoint=WorldPoint(x=..., y=..., plane=0) regionId=... type=VARP_MUSIC_CURRENT_TRACK old=... -> new=...
+[Music Transition Diagnostics] timestamp=2026-09-21T18:42:03.127Z tick=12345 worldPoint=WorldPoint(x=..., y=..., plane=0) regionId=... type=VARP_MUSIC_CURRENT_TRACK old=... -> new=...
+[Music Transition Diagnostics] timestamp=2026-09-21T18:42:03.128Z tick=12345 worldPoint=WorldPoint(x=..., y=..., plane=0) regionId=... type=SCRIPT_CONTEXT_BEFORE trackOld=... trackNew=... phase=PRE scriptId=... scriptTimestamp=... offsetMs=-12.345 scriptTick=12345
 ```
 
 ## Build and test
