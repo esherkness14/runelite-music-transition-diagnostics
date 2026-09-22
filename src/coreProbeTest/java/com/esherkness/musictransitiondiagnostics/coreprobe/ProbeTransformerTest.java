@@ -32,6 +32,7 @@ public class ProbeTransformerTest
 		CoreProbeLog.arm();
 		for (String owner : ProbeTransformer.TARGETS.keySet())
 		{
+			if (owner.equals("nu")) { continue; } // Instance setter is tested below.
 			Class<?> target = define(owner, ProbeTransformer.instrument(owner, fixture(owner, false)));
 			Method method = target.getDeclaredMethods()[0];
 			ArrayList<Integer> ids = new ArrayList<>(Arrays.asList(123, -1, 456));
@@ -125,7 +126,7 @@ public class ProbeTransformerTest
 			assertEquals(77, target.getField("seen6").getInt(null));
 			assertEquals(1, target.getField("executions").getInt(null));
 			String text = Files.readString(log);
-			assertTrue(text.contains("state=ARMED version=1.12.39 targets=4 mode=AREA_INCOMING_FADE_TEST configuredIncomingFade=" + configured));
+			assertTrue(text.contains("state=ARMED version=1.12.39 targets=5 mode=AREA_INCOMING_FADE_TEST configuredIncomingFade=" + configured));
 			assertTrue(text.contains("originalTimings=[0,60,60,0]"));
 			assertTrue(text.contains("effectiveTimings=[0,60,60," + configured + "]"));
 		}
@@ -169,6 +170,80 @@ public class ProbeTransformerTest
 		{
 			assertThrows(invalid, IllegalArgumentException.class, () -> CoreProbeAgent.parseIncomingFade(invalid));
 		}
+	}
+
+	@Test
+	public void nativeVolumeSetterIsLoggedOnlyInsideAcceptedWindow() throws Exception
+	{
+		Path log = temporary.newFile("volume-window.log").toPath();
+		CoreProbeLog.initialize(log);
+		CoreProbeLog.arm(120);
+		byte[] original = fixture("nu", false);
+		assertArrayEquals(original, ProbeTransformer.instrument("nu", original, false));
+		Class<?> target = define("nu", ProbeTransformer.instrument("nu", original, true));
+		Object stream = target.getConstructor().newInstance();
+		Method setter = target.getDeclaredMethod("az", int.class, int.class);
+
+		setter.invoke(stream, 40, 7); // No accepted area override yet.
+		assertEquals(0, Files.readString(log).lines().filter(l -> l.contains("type=STREAM_VOLUME_WRITE")).count());
+		assertEquals(120, CoreProbeLog.effectiveIncomingFade(0, 60, 60, 0, false));
+		for (int volume : new int[]{0, 1, 20, 120})
+		{
+			setter.invoke(stream, volume, 7);
+		}
+		assertEquals(5, target.getField("executions").getInt(null));
+		assertEquals(120, target.getField("seen0").getInt(null));
+		assertEquals(7, target.getField("seen1").getInt(null));
+		String text = Files.readString(log);
+		assertEquals(4, text.lines().filter(l -> l.contains("type=STREAM_VOLUME_WRITE")).count());
+		assertTrue(text.contains("requestedVolume=0"));
+		assertTrue(text.contains("requestedVolume=120"));
+		assertTrue(text.contains("streamIdentity=0x" + Integer.toHexString(System.identityHashCode(stream))));
+		assertTrue(text.contains("volumeWindow=1"));
+		assertTrue(text.contains(" caller="));
+		CoreProbeLog.streamVolumeWriteAt(stream, 200,
+			System.nanoTime() + CoreProbeLog.VOLUME_WINDOW_NANOS + 1);
+		assertEquals(4, Files.readString(log).lines().filter(l -> l.contains("type=STREAM_VOLUME_WRITE")).count());
+	}
+
+	@Test
+	public void nonmatchingRequestNeverOpensVolumeWindow() throws Exception
+	{
+		Path log = temporary.newFile("no-volume-window.log").toPath();
+		CoreProbeLog.initialize(log);
+		CoreProbeLog.arm(120);
+		assertEquals(0, CoreProbeLog.effectiveIncomingFade(0, 20, 0, 0, false));
+		Class<?> target = define("nu", ProbeTransformer.instrument("nu", fixture("nu", false), true));
+		target.getDeclaredMethod("az", int.class, int.class)
+			.invoke(target.getConstructor().newInstance(), 80, 7);
+		assertFalse(Files.readString(log).contains("type=STREAM_VOLUME_WRITE"));
+	}
+
+	@Test
+	public void volumeWindowHasAHardLogLimit() throws Exception
+	{
+		Path log = temporary.newFile("volume-limit.log").toPath();
+		CoreProbeLog.initialize(log);
+		CoreProbeLog.arm(120);
+		CoreProbeLog.effectiveIncomingFade(0, 60, 60, 0, false);
+		Object stream = new Object();
+		long start = System.nanoTime();
+		for (int i = 0; i < 520; i++)
+		{
+			CoreProbeLog.streamVolumeWriteAt(stream, i, start + i);
+		}
+		String text = Files.readString(log);
+		assertEquals(512, text.lines().filter(l -> l.contains("type=STREAM_VOLUME_WRITE")).count());
+		assertEquals(1, text.lines().filter(l -> l.contains("type=STREAM_VOLUME_LIMIT")).count());
+	}
+
+	@Test
+	public void nativeWriterNamesAreClassifiedConservatively()
+	{
+		assertEquals("FadeInTask", CoreProbeLog.musicTask("wp.az"));
+		assertEquals("FadeOutTask", CoreProbeLog.musicTask("wo.ab"));
+		assertEquals("StartSongTask", CoreProbeLog.musicTask("wk.az"));
+		assertEquals("OTHER", CoreProbeLog.musicTask("wpFake.az"));
 	}
 
 	@Test
@@ -325,14 +400,25 @@ public class ProbeTransformerTest
 		String descriptor = signature.substring(signature.indexOf('('));
 		ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
 		writer.visit(Opcodes.V11, Opcodes.ACC_PUBLIC, owner, null, "java/lang/Object", null);
+		boolean instanceMethod = owner.equals("nu");
+		if (instanceMethod)
+		{
+			MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+			constructor.visitCode();
+			constructor.visitVarInsn(Opcodes.ALOAD, 0);
+			constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/Object", "<init>", "()V", false);
+			constructor.visitInsn(Opcodes.RETURN);
+			constructor.visitMaxs(0, 0);
+			constructor.visitEnd();
+		}
 		writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "executions", "I", null, null).visitEnd();
-		MethodVisitor body = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, name, descriptor, null, null);
+		MethodVisitor body = writer.visitMethod(Opcodes.ACC_PUBLIC | (instanceMethod ? 0 : Opcodes.ACC_STATIC), name, descriptor, null, null);
 		body.visitCode();
 		Type[] args = Type.getArgumentTypes(descriptor);
 		for (int i = 0; i < args.length; i++)
 		{
 			writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "seen" + i, args[i].getDescriptor(), null, null).visitEnd();
-			body.visitVarInsn(args[i].getOpcode(Opcodes.ILOAD), i);
+			body.visitVarInsn(args[i].getOpcode(Opcodes.ILOAD), i + (instanceMethod ? 1 : 0));
 			body.visitFieldInsn(Opcodes.PUTSTATIC, owner, "seen" + i, args[i].getDescriptor());
 		}
 		body.visitFieldInsn(Opcodes.GETSTATIC, owner, "executions", "I");

@@ -18,9 +18,15 @@ public final class CoreProbeLog
 	private static final DateTimeFormatter UTC = DateTimeFormatter
 		.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSXXX").withZone(ZoneOffset.UTC);
 	private static final StackWalker WALKER = StackWalker.getInstance();
+	static final long VOLUME_WINDOW_NANOS = 4_500_000_000L;
+	private static final int MAX_VOLUME_LINES = 512;
 	private static BufferedWriter file;
 	private static volatile boolean enabled;
 	private static volatile int configuredIncomingFade = -1;
+	private static long volumeWindowStart;
+	private static int volumeWindowId;
+	private static int volumeLineCount;
+	private static boolean volumeLimitReported;
 	private static boolean disabledReported;
 
 	private CoreProbeLog() { }
@@ -37,6 +43,10 @@ public final class CoreProbeLog
 	{
 		enabled = false;
 		configuredIncomingFade = -1;
+		volumeWindowStart = 0;
+		volumeWindowId = 0;
+		volumeLineCount = 0;
+		volumeLimitReported = false;
 		disabledReported = false;
 		if (file != null)
 		{
@@ -61,7 +71,7 @@ public final class CoreProbeLog
 		}
 		configuredIncomingFade = incomingFade == null ? -1 : incomingFade;
 		enabled = true;
-		status("ARMED", "version=1.12.39 targets=4 mode="
+		status("ARMED", "version=1.12.39 targets=5 mode="
 			+ (incomingFade == null ? "OBSERVE_ONLY" : "AREA_INCOMING_FADE_TEST configuredIncomingFade=" + incomingFade));
 	}
 
@@ -159,12 +169,22 @@ public final class CoreProbeLog
 		{
 			long monoNanos = System.nanoTime();
 			String caller = callerOf("ij.af");
-			write(header(monoNanos)
-				+ " method=ij.af override=AREA_INCOMING_FADE"
-				+ " originalTimings=[0,60,60,0]"
-				+ " effectiveTimings=[0,60,60," + testFade + "]"
-				+ " specialRoute=false caller=" + caller
-				+ " callerCategory=" + category(caller));
+			synchronized (CoreProbeLog.class)
+			{
+				int nextWindowId = volumeWindowId + 1;
+				write(header(monoNanos)
+					+ " method=ij.af override=AREA_INCOMING_FADE"
+					+ " originalTimings=[0,60,60,0]"
+					+ " effectiveTimings=[0,60,60," + testFade + "]"
+					+ " specialRoute=false volumeWindow=" + nextWindowId
+					+ " caller=" + caller + " callerCategory=" + category(caller));
+				// Start only after the audit line succeeds. Audit failure leaves
+				// the original incoming fade in place and opens no window.
+				volumeWindowId = nextWindowId;
+				volumeWindowStart = monoNanos;
+				volumeLineCount = 0;
+				volumeLimitReported = false;
+			}
 			return testFade;
 		}
 		catch (Throwable ignored)
@@ -173,6 +193,67 @@ public final class CoreProbeLog
 			catch (Throwable alsoIgnored) { }
 			return incomingFade;
 		}
+	}
+
+	/**
+	 * Entry observation for the verified nu.az(II)V setter. The setter body
+	 * writes its first argument to this stream's volume field. No obfuscated
+	 * field or request object is read here; identityHashCode lets us group
+	 * calls on the same stream without retaining the stream itself.
+	 */
+	public static void streamVolumeWrite(Object stream, int requestedVolume)
+	{
+		streamVolumeWriteAt(stream, requestedVolume, System.nanoTime());
+	}
+
+	// The explicit clock also lets fixture tests verify expiry without sleeping.
+	static void streamVolumeWriteAt(Object stream, int requestedVolume, long monoNanos)
+	{
+		if (!enabled || configuredIncomingFade < 1)
+		{
+			return;
+		}
+		try
+		{
+			synchronized (CoreProbeLog.class)
+			{
+				long elapsedNanos = monoNanos - volumeWindowStart;
+				if (volumeWindowId == 0 || elapsedNanos < 0 || elapsedNanos >= VOLUME_WINDOW_NANOS)
+				{
+					return;
+				}
+				if (volumeLineCount >= MAX_VOLUME_LINES)
+				{
+					if (!volumeLimitReported)
+					{
+						volumeLimitReported = true;
+						write(header(monoNanos) + " type=STREAM_VOLUME_LIMIT volumeWindow="
+							+ volumeWindowId + " maxLines=" + MAX_VOLUME_LINES);
+					}
+					return;
+				}
+				String caller = callerOf("nu.az");
+				write(header(monoNanos) + " type=STREAM_VOLUME_WRITE volumeWindow="
+					+ volumeWindowId + " elapsedNanos=" + elapsedNanos
+					+ " streamIdentity=0x" + Integer.toHexString(System.identityHashCode(stream))
+					+ " requestedVolume=" + requestedVolume + " caller=" + caller
+					+ " task=" + musicTask(caller));
+				volumeLineCount++;
+			}
+		}
+		catch (Throwable ignored)
+		{
+			try { disable("volume-observation-failed"); }
+			catch (Throwable alsoIgnored) { }
+		}
+	}
+
+	static String musicTask(String caller)
+	{
+		if (caller.startsWith("wp.")) { return "FadeInTask"; }
+		if (caller.startsWith("wo.")) { return "FadeOutTask"; }
+		if (caller.startsWith("wk.")) { return "StartSongTask"; }
+		return "OTHER";
 	}
 
 	private static String copiedIds(ArrayList<?> requests)

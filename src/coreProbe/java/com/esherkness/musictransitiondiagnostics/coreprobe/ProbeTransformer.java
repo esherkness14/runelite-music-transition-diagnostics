@@ -27,6 +27,7 @@ final class ProbeTransformer implements ClassFileTransformer
 	static final String LOGGER = CoreProbeLog.class.getName().replace('.', '/');
 	static final String LOG_DESCRIPTOR = "(Ljava/lang/String;Ljava/util/ArrayList;IIIII)V";
 	static final String FADE_DESCRIPTOR = "(IIIIZ)I";
+	static final String VOLUME_DESCRIPTOR = "(Ljava/lang/Object;I)V";
 	static final Map<String, String> TARGETS = new LinkedHashMap<>();
 	static
 	{
@@ -34,12 +35,15 @@ final class ProbeTransformer implements ClassFileTransformer
 		TARGETS.put("ij", "af(Ljava/util/ArrayList;IIIIZI)V");
 		TARGETS.put("bk", "ab(IIB)V");
 		TARGETS.put("im", "as(IIIII)V");
+		// Verified against injected-client 1.12.39: instance setter, first int is volume.
+		TARGETS.put("nu", "az(II)V");
 	}
 
 	private final Path jar;
 	private final ClassLoader expectedLoader;
 	private final Map<String, byte[]> originals;
 	private final Map<String, byte[]> instrumented;
+	private final boolean areaFadeTest;
 	private volatile boolean disabled;
 
 	ProbeTransformer(Path jar, ClassLoader loader, Map<String, byte[]> originals,
@@ -48,8 +52,9 @@ final class ProbeTransformer implements ClassFileTransformer
 		this.jar = jar;
 		this.expectedLoader = loader;
 		this.originals = originals;
+		this.areaFadeTest = areaFadeTest;
 		this.instrumented = new LinkedHashMap<>();
-		// Validate/prepare ALL four methods before registering ANY transformation.
+		// Validate/prepare ALL five methods before registering ANY transformation.
 		for (String owner : TARGETS.keySet())
 		{
 			instrumented.put(owner, instrument(owner, originals.get(owner), areaFadeTest));
@@ -72,6 +77,12 @@ final class ProbeTransformer implements ClassFileTransformer
 				|| !Arrays.equals(originals.get(name), bytes))
 			{
 				throw new IllegalStateException("unexpected class definition");
+			}
+			if (name.equals("nu") && !areaFadeTest)
+			{
+				// Ordinary run verifies nu but leaves its bytecode unchanged.
+				CoreProbeLog.status("VERIFIED_UNCHANGED", "method=nu.az(II)V");
+				return null;
 			}
 			CoreProbeLog.status("TRANSFORMED", "method=" + name + "." + TARGETS.get(name));
 			return instrumented.get(name).clone();
@@ -107,7 +118,8 @@ final class ProbeTransformer implements ClassFileTransformer
 		{
 			if ((method.name + method.desc).equals(TARGETS.get(owner)))
 			{
-				if (target != null || (method.access & Opcodes.ACC_STATIC) == 0
+				boolean shouldBeStatic = !owner.equals("nu");
+				if (target != null || ((method.access & Opcodes.ACC_STATIC) != 0) != shouldBeStatic
 					|| (method.access & (Opcodes.ACC_ABSTRACT | Opcodes.ACC_NATIVE)) != 0)
 				{
 					throw new IllegalArgumentException("unsupported method shape");
@@ -119,6 +131,10 @@ final class ProbeTransformer implements ClassFileTransformer
 		{
 			throw new IllegalArgumentException("missing signature");
 		}
+		if (owner.equals("nu") && !areaFadeTest)
+		{
+			return original.clone();
+		}
 
 		InsnList entry = new InsnList();
 		LabelNode start = new LabelNode();
@@ -126,17 +142,29 @@ final class ProbeTransformer implements ClassFileTransformer
 		LabelNode handler = new LabelNode();
 		LabelNode resume = new LabelNode();
 		entry.add(start);
-		entry.add(new LdcInsnNode(owner + "." + target.name));
-		boolean hasList = owner.equals("rj") || owner.equals("ij");
-		entry.add(hasList ? new VarInsnNode(Opcodes.ALOAD, 0) : new InsnNode(Opcodes.ACONST_NULL));
-		int first = hasList ? 1 : 0;
-		int slots = owner.equals("bk") ? 3 : 5;
-		for (int i = 0; i < 5; i++)
+		if (owner.equals("nu"))
 		{
-			entry.add(i < slots ? new VarInsnNode(Opcodes.ILOAD, first + i)
-				: new InsnNode(Opcodes.ICONST_0));
+			// Observe the exact instance and requested volume. The guard int and
+			// original setter body are untouched; logging is window-gated.
+			entry.add(new VarInsnNode(Opcodes.ALOAD, 0));
+			entry.add(new VarInsnNode(Opcodes.ILOAD, 1));
+			entry.add(new MethodInsnNode(Opcodes.INVOKESTATIC, LOGGER,
+				"streamVolumeWrite", VOLUME_DESCRIPTOR, false));
 		}
-		entry.add(new MethodInsnNode(Opcodes.INVOKESTATIC, LOGGER, "enter", LOG_DESCRIPTOR, false));
+		else
+		{
+			entry.add(new LdcInsnNode(owner + "." + target.name));
+			boolean hasList = owner.equals("rj") || owner.equals("ij");
+			entry.add(hasList ? new VarInsnNode(Opcodes.ALOAD, 0) : new InsnNode(Opcodes.ACONST_NULL));
+			int first = hasList ? 1 : 0;
+			int slots = owner.equals("bk") ? 3 : 5;
+			for (int i = 0; i < 5; i++)
+			{
+				entry.add(i < slots ? new VarInsnNode(Opcodes.ILOAD, first + i)
+					: new InsnNode(Opcodes.ICONST_0));
+			}
+			entry.add(new MethodInsnNode(Opcodes.INVOKESTATIC, LOGGER, "enter", LOG_DESCRIPTOR, false));
+		}
 		if (areaFadeTest && owner.equals("ij"))
 		{
 			// Only the explicit Experiment 4 variant writes an argument local.

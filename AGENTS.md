@@ -73,6 +73,12 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   fade. Archive 151 appeared with `0,0,0,0` in natural progression and
   `0,60,60,0` at an area boundary: timings depend on request context. Leave
   login/startup fading as a future question; do not investigate it yet.
+- Experiment 5 live tests confirmed 120-step incoming-fade overrides. The user
+  heard a gradual overall transition but not a clearly continuous incoming
+  ramp. Experiment 6 observes the verified `nu.az(II)V` stream-volume setter
+  for a bounded window after an accepted override. Treat setter calls as
+  measurements, not proof of perceived loudness. Preserve Experiment 5 timing
+  behavior and leave login/startup fading for later.
 - Preserve Java 11 compatibility and the official `runelite/example-plugin`
   Gradle structure. Use `./gradlew build` (or `.\gradlew.bat build` on Windows)
   after code changes.

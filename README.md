@@ -27,7 +27,8 @@ Diagnostics** in the plugin list if necessary. Any account login is your own
 manual step; do not share credentials or session files for this experiment.
 
 At startup look for `[Music Transition Core Probe] ... state=ARMED` and four
-`state=TRANSFORMED` messages as the target classes load. `ARMED` means preflight
+`state=TRANSFORMED` messages as the original request classes load. The fifth
+class, `nu`, reports `VERIFIED_UNCHANGED` in normal `run`. `ARMED` means preflight
 passed, not that a music request has occurred. If `state=DISABLED` appears,
 RuneLite may still run normally, but do not treat that session as a successful
 core-probe experiment. Preserve the reason and re-inspect the current artifact.
@@ -85,6 +86,30 @@ detection design. It adds no silence gap. Login/startup fading remains a future
 question. The user must perform any RuneScape test manually; the build/tests do
 not launch or live-test the game.
 
+## Observe the incoming volume ramp (Experiment 6)
+
+Use the same Experiment 5 launcher, normally at its 120-step default:
+
+```powershell
+.\gradlew.bat runAreaFadeTest
+```
+
+After an accepted `0,60,60,0` override, the agent records calls to the
+verified native `nu.az(int, int)` stream-volume setter for 4.5 seconds. Each
+`STREAM_VOLUME_WRITE` line includes a monotonic `nanoTime`, `elapsedNanos`,
+`requestedVolume`, `streamIdentity`, caller, and task label. The override line's
+`volumeWindow` number ties the writes to that area request. At most 512 setter
+lines are written per window; a `STREAM_VOLUME_LIMIT` marker indicates the cap.
+
+Compare `StartSongTask` and `FadeInTask` values for one stream identity with
+`FadeOutTask` values for another. Count distinct incoming volumes, check for a
+zero start and gradual increase, and look for a target-volume write from a
+different caller. These are setter inputs, not measured sound amplitude. A
+smooth native ramp could still sound uneven because of the music itself.
+The live Experiment 5 report motivates this measurement: 120 steps felt more
+gradual overall, but the incoming entrance sounded partly stepped. Experiment
+6 has not yet been live-tested. Login/startup fading remains a future question.
+
 No location is hard-coded in the plugin. Region IDs are metadata only; the
 Draynor boundary was already observed within a single RuneScape region.
 
@@ -98,8 +123,9 @@ The exact verified 1.12.39 method entries are:
 | `ij.af(ArrayList, int, int, int, int, boolean, int)` | `(Ljava/util/ArrayList;IIIIZI)V` | Request count, four timings, `specialRoute` |
 | `bk.ab(int, int, byte)` | `(IIB)V` | Outgoing delay/fade and raw `arg3` |
 | `im.as(int, int, int, int, int)` | `(IIIII)V` | Raw `arg1` through `arg5` |
+| `nu.az(int, int)` | `(II)V` | Windowed stream identity, requested volume, and writer task in opt-in mode |
 
-Each invocation emits one concise line with a millisecond UTC timestamp,
+Each invocation of the original four entries emits one concise line with a millisecond UTC timestamp,
 `System.nanoTime()`, method, and immediate caller. Caller classification is
 strict: only `client.ia`/`client.mh` are `PACKET`, only `ee.bt` is `SCRIPT`, and
 all other callers are `OTHER`. For example `ij.af` called by `rj.bc` is `OTHER`;
@@ -108,7 +134,7 @@ script arguments, or arbitrary packet payloads are dumped. `ij.af` logs count
 only, avoiding reflection on its internal request objects.
 
 The agent verifies the complete official injected-client 1.12.39 SHA-256 and
-all four static signatures before registering a transformer. At load time it
+all five exact signatures before registering a transformer. At load time it
 checks classloader, jar provenance, and original class bytes again. Missing,
 shadowed, changed, already-loaded, or unsupported targets disable the probe;
 it does not instrument a guessed signature. The expected hash and all findings
@@ -117,8 +143,9 @@ are recorded in `RESEARCH-NOTES.md`.
 The development client dependency still uses `latest.release`: a future release
 may therefore disable this version-specific probe. Re-research that binary
 before changing the allowlist. Other agents/retransformation/custom classloaders
-are not supported. Only the four listed names are instrumented; obfuscated
-alternate/copy methods are not claimed to be covered.
+are not supported. The `nu.az` hook is transformed only in opt-in mode;
+normal `run` verifies its unchanged bytecode. Obfuscated alternate/copy
+methods are not claimed to be covered.
 
 The opt-in agent mode and 1–300 step value are validated independently by
 Gradle and the agent. Unknown or invalid arguments fail closed. Normal `run`

@@ -22,7 +22,7 @@ public final class ProbeSmokeMain
 		{
 			throw new AssertionError("Known-client probe did not arm; inspect " + log);
 		}
-		for (String name : new String[]{"rj", "ij", "bk", "im"})
+		for (String name : new String[]{"rj", "ij", "bk", "im", "nu"})
 		{
 			// Force method verification/resolution but not <clinit> or any music call.
 			Class.forName(name, false, ClassLoader.getSystemClassLoader()).getDeclaredMethods();
@@ -39,6 +39,13 @@ public final class ProbeSmokeMain
 				throw new AssertionError("Missing transformation: " + method);
 			}
 		}
-		System.out.println("Known-client smoke: all four transformed classes verified; no game methods invoked.");
+		String nuState = text.contains("mode=AREA_INCOMING_FADE_TEST")
+			? "state=TRANSFORMED method=nu.az(II)V"
+			: "state=VERIFIED_UNCHANGED method=nu.az(II)V";
+		if (!text.contains(nuState))
+		{
+			throw new AssertionError("Missing native volume-setter verification: " + log);
+		}
+		System.out.println("Known-client smoke: five target classes verified; no game methods invoked.");
 	}
 }

@@ -558,5 +558,81 @@ general conversion factor or a prediction of audible incoming-fade length.
 
 ### Runtime results
 
-Not live-tested in this implementation pass. Login/startup fading remains a
-future question and was not investigated.
+The user's live Experiment 5 test armed with `configuredIncomingFade=120`.
+Multiple real area transitions entered `ij.af` with original timings
+`0,60,60,0`, and the harness recorded effective timings `0,60,60,120` for
+each accepted override.
+
+The user reported that the overall transition felt more gradual than vanilla
+and that the existing outgoing fade sounded good. The incoming audio did not
+sound like a continuous smooth ramp: subjectively there was silence, then a
+subtle partial-volume entrance, then something close to an abrupt jump to full
+volume. This is a listening observation, **not** proof that the engine writes
+an abrupt volume jump. Experiment 6 must measure the native stream-volume
+writes and their ordering before drawing that conclusion.
+
+Login/startup fading remains a future question and was not investigated.
+
+## Experiment 6: native incoming stream-volume ramp observation (2026-09-22)
+
+### Question
+
+Measure the setter calls behind the subjective Experiment 5 report. Does the
+incoming stream start at zero, receive many incremental writes, or receive an
+early target-volume write from another task? A smooth requested-volume series
+would make track composition or audibility a stronger explanation for the
+perceived jump, but the setter calls alone do not measure PCM output or human
+loudness.
+
+### Re-verified binary evidence before hooking
+
+- The local `injected-client-1.12.39.jar` again hashes to SHA-256
+  `25f42961c400bd9dfff1554402441c0ba6d1cffd011163cb9b0b4c42ae194f85`.
+- `javap -p -s -c` confirms `nu.az(int, int)` is a **public instance method**
+  with exact JVM descriptor `(II)V`. Its ordinary body stores the first integer
+  into the stream's encoded `aj` volume field while holding its existing lock;
+  the second integer is not the volume value. The hook records the first
+  argument at method entry and never reads or changes `aj`.
+- Verified `invokevirtual nu.az:(II)V` call sites exist in `wp` (`FadeInTask`),
+  `wo` (`FadeOutTask`), and `wk` (`StartSongTask`). A hook at the shared setter
+  can therefore identify those writers and reveal another caller if present.
+
+### Implemented observation
+
+- The existing `runAreaFadeTest` eligibility and configurable incoming-fade
+  replacement are unchanged. A successfully audited eligible override starts
+  a 4.5-second volume-observation window. The window resets on another accepted
+  override and has a hard limit of 512 setter lines plus one limit marker.
+- During the window, `nu.az` entry logs UTC milliseconds, `nanoTime`, elapsed
+  nanoseconds, window number, requested stream volume, `System.identityHashCode`
+  of the stream, immediate caller, and the verified task category
+  (`FadeInTask`, `FadeOutTask`, `StartSongTask`, or `OTHER`). Stream identity is
+  stable for one object in a JVM run, but is not an archive ID and could in
+  principle collide. The request objects, script inputs, PCM samples, and
+  obfuscated stream fields are not dumped.
+- Ordinary `run` still has no timing substitution. It verifies the fifth
+  target's provenance/signature but returns the original `nu` class bytes;
+  therefore it produces no stream-volume lines. The opt-in agent transforms
+  `nu.az` without changing its arguments, return, exception path, or setter
+  body. The existing full-jar hash and per-class byte/provenance checks also
+  cover this fifth target.
+- Interpret `requestedVolume` as a setter input. The inspected ordinary body
+  writes that input to its volume field, but an entry log is not proof that a
+  call completed, nor that the audible signal had that amplitude. Group lines
+  by `volumeWindow` and `streamIdentity`, then compare `task` and time ordering.
+  Synchronous logging itself can add timing overhead.
+
+### Automated verification
+
+`.\gradlew.bat build` passed. Synthetic fixtures verify window
+eligibility/expiry, stable stream identity, unmodified setter arguments and
+body execution, conservative caller categories, and the 512-line limit.
+Separate `-Xverify:all` smoke processes load all five target classes from the
+verified client jar: `nu.az` is transformed only in opt-in mode and reported
+`VERIFIED_UNCHANGED` in normal mode. No game music method was invoked.
+
+### Runtime results
+
+Not live-tested in this implementation pass. The five questions above remain
+open until a user-run transition produces stream-volume lines. Login/startup
+fading remains a separate future question.
