@@ -93,12 +93,68 @@ public class ProbeTransformerTest
 	}
 
 	@Test
+	public void normalRunRemainsObservationOnlyForAreaSignature() throws Exception
+	{
+		CoreProbeLog.initialize(temporary.newFile("observe-only.log").toPath());
+		CoreProbeLog.arm(false);
+		Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), false));
+		invokeIj(target, 0, 60, 60, 0, false);
+		assertEquals(0, target.getField("seen1").getInt(null));
+		assertEquals(60, target.getField("seen2").getInt(null));
+		assertEquals(60, target.getField("seen3").getInt(null));
+		assertEquals(0, target.getField("seen4").getInt(null));
+		assertEquals(1, target.getField("executions").getInt(null));
+	}
+
+	@Test
+	public void exactAreaSignatureChangesOnlyIncomingFadeAndRunsOriginal() throws Exception
+	{
+		Path log = temporary.newFile("override.log").toPath();
+		CoreProbeLog.initialize(log);
+		CoreProbeLog.arm(true);
+		Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), true));
+		ArrayList<Integer> requests = invokeIj(target, 0, 60, 60, 0, false);
+		assertSame(requests, target.getField("seen0").get(null));
+		assertEquals(0, target.getField("seen1").getInt(null));
+		assertEquals(60, target.getField("seen2").getInt(null));
+		assertEquals(60, target.getField("seen3").getInt(null));
+		assertEquals(60, target.getField("seen4").getInt(null));
+		assertFalse(target.getField("seen5").getBoolean(null));
+		assertEquals(77, target.getField("seen6").getInt(null));
+		assertEquals(1, target.getField("executions").getInt(null));
+		String text = Files.readString(log);
+		assertTrue(text.contains("originalTimings=[0,60,60,0]"));
+		assertTrue(text.contains("effectiveTimings=[0,60,60,60]"));
+	}
+
+	@Test
+	public void naturalSignaturesRemainUntouchedInAreaFadeMode() throws Exception
+	{
+		CoreProbeLog.initialize(temporary.newFile("natural.log").toPath());
+		CoreProbeLog.arm(true);
+		assertIjIncomingFade(0, 20, 0, 0, false, 0);
+		assertIjIncomingFade(0, 0, 0, 0, false, 0);
+	}
+
+	@Test
+	public void specialRouteAndUnrelatedTimingsRemainUntouched() throws Exception
+	{
+		CoreProbeLog.initialize(temporary.newFile("nonmatches.log").toPath());
+		CoreProbeLog.arm(true);
+		assertIjIncomingFade(0, 60, 60, 0, true, 0);
+		assertIjIncomingFade(1, 60, 60, 0, false, 0);
+		assertIjIncomingFade(0, 59, 60, 0, false, 0);
+		assertIjIncomingFade(0, 60, 59, 0, false, 0);
+		assertIjIncomingFade(0, 60, 60, 1, false, 1);
+	}
+
+	@Test
 	public void rejectWrongSignatureAndUnexpectedDefinition()
 	{
 		assertThrows(IllegalArgumentException.class, () -> ProbeTransformer.instrument("ij", fixture("rj", false)));
 		Map<String, byte[]> original = new LinkedHashMap<>();
 		ProbeTransformer.TARGETS.keySet().forEach(n -> original.put(n, fixture(n, false)));
-		ProbeTransformer transformer = new ProbeTransformer(Path.of("not-the-client.jar"), getClass().getClassLoader(), original);
+		ProbeTransformer transformer = new ProbeTransformer(Path.of("not-the-client.jar"), getClass().getClassLoader(), original, false);
 		assertNull(transformer.transform(getClass().getClassLoader(), "rj", null, null, original.get("rj")));
 		assertNull(transformer.transform(getClass().getClassLoader(), "unrelated", null, null, new byte[0]));
 		byte[] wrongSignature = fixture("rj", false);
@@ -211,6 +267,24 @@ public class ProbeTransformerTest
 			case "bk": return new Object[]{11, 22, (byte) 7};
 			default: return new Object[]{11, 22, 33, 44, 55};
 		}
+	}
+
+	private static ArrayList<Integer> invokeIj(Class<?> target, int outgoingDelay,
+		int outgoingFade, int incomingDelay, int incomingFade, boolean specialRoute) throws Exception
+	{
+		ArrayList<Integer> requests = new ArrayList<>(Arrays.asList(147));
+		target.getDeclaredMethods()[0].invoke(null, requests, outgoingDelay, outgoingFade,
+			incomingDelay, incomingFade, specialRoute, 77);
+		return requests;
+	}
+
+	private void assertIjIncomingFade(int outgoingDelay, int outgoingFade,
+		int incomingDelay, int incomingFade, boolean specialRoute, int expected) throws Exception
+	{
+		Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), true));
+		invokeIj(target, outgoingDelay, outgoingFade, incomingDelay, incomingFade, specialRoute);
+		assertEquals(expected, target.getField("seen4").getInt(null));
+		assertEquals(1, target.getField("executions").getInt(null));
 	}
 
 	private static Class<?> define(String name, byte[] bytes)

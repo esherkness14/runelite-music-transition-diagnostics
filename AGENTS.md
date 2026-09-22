@@ -7,9 +7,10 @@ music transitions smoothly fade out, pause briefly, and fade in. The eventual
 behavior should ideally cover both area-triggered music changes and natural
 end-of-track progression.
 
-Do **not** implement fading until the client transition path is understood.
-Diagnostics must remain read-only: do not change playback, volume, varps,
-varclients, scripts, or other client state during the investigation.
+Except for an explicitly authorized, opt-in experiment, diagnostics must remain
+read-only: do not change playback, volume, varps, varclients, scripts, or other
+client state during the investigation. Do not turn a narrow experiment into the
+final fade design without new evidence and authorization.
 
 ## Preferred direction
 
@@ -60,6 +61,12 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   returns, exceptions, and music state; no fade control or intentional delays.
   Keep the agent outside main/plugin artifacts and reject unknown client hashes
   or signatures. See `RESEARCH-NOTES.md` for the exact pinned artifact.
+- Experiment 4 authorizes one opt-in exception: `runAreaFadeTest` may change only
+  `ij.af`'s `incomingFade` from 0 to 60 when `specialRoute == false` and the
+  complete timing tuple is exactly `0,60,60,0`. Ordinary `run` remains
+  observation-only. This signature is a controlled experiment, not the final
+  area-detection architecture. Preserve the version/hash/signature gates and
+  never alter the natural `0,20,0,0` or `0,0,0,0` signatures.
 - Preserve Java 11 compatibility and the official `runelite/example-plugin`
   Gradle structure. Use `./gradlew build` (or `.\gradlew.bat build` on Windows)
   after code changes.

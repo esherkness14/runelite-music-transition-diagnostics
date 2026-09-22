@@ -1,15 +1,15 @@
 # Music Transition Diagnostics
 
-A temporary, read-only RuneLite development plugin comparing area-triggered
-music replacement with natural end-of-track progression. Experiment 3 adds a
-separate development-only Java agent to observe native music requests.
+A temporary RuneLite development plugin comparing area-triggered music
+replacement with natural end-of-track progression. The ordinary launcher is
+read-only. Experiment 4 adds a separate, explicitly opt-in launcher for one
+narrow incoming-fade test at the verified native request entry.
 
-Neither component implements fading, selects tracks, changes volume/varps,
-runs scripts, or contains a geographic music map. The agent changes in-memory
-bytecode only enough to emit diagnostics; original arguments, method bodies,
-returns, and exceptions remain intact. Logging inevitably adds some observation
-and synchronous I/O overhead, but there are no intentional sleeps, waits, or
-playback delays. Research findings live in [RESEARCH-NOTES.md](RESEARCH-NOTES.md).
+Neither mode selects tracks, changes volume/varps, runs scripts, or contains a
+geographic music map. Normal `run` changes in-memory bytecode only enough to
+emit diagnostics; original arguments, method bodies, returns, and exceptions
+remain intact. `runAreaFadeTest` is the sole exception described below. Research
+findings live in [RESEARCH-NOTES.md](RESEARCH-NOTES.md).
 
 ## Run Experiment 3
 
@@ -39,8 +39,35 @@ core-probe experiment. Preserve the reason and re-inspect the current artifact.
    against varp and active-MIDI changes. `nanoTime` in core lines and `monoNanos`
    in plugin lines use the same JVM monotonic clock. Do not compare them across
    JVM runs or assume the timing arguments are milliseconds.
-5. Record results in `RESEARCH-NOTES.md`. Experiment 3 live results are currently
-   **not yet tested**; automated verification does not replace this experiment.
+5. Record results in `RESEARCH-NOTES.md`.
+
+The completed live run found `0,60,60,0` in both Draynor directions through
+the packet / `client.ia` path. Natural progression first requested archive 147
+with `0,20,0,0`, then about 1.18 seconds later archive 151 with `0,0,0,0`.
+Archive 147's content/role is unknown and is not labeled as silence.
+
+## Run Experiment 4 (opt-in behavior change)
+
+```powershell
+.\gradlew.bat runAreaFadeTest
+```
+
+On macOS/Linux use `./gradlew runAreaFadeTest`. This is not the normal launcher.
+It retains all Experiment 3 logging and changes `ij.af` only when:
+
+- `specialRoute == false`, and
+- the complete original tuple is exactly `0,60,60,0`.
+
+For that exact match only, the effective tuple becomes `0,60,60,60`: outgoing
+delay/fade and incoming delay are preserved, and only incoming fade changes.
+The probe logs both `originalTimings=[0,60,60,0]` and
+`effectiveTimings=[0,60,60,60]`. Natural tuples `0,20,0,0` and `0,0,0,0`,
+special/jingle requests, and unrelated timings are untouched.
+
+This signature match is a controlled experiment based on one observed boundary,
+not the final plugin's area-detection design. It adds no silence gap and does not
+change the outgoing fade. The user must perform any RuneScape login/boundary test
+manually; the build/tests do not launch or live-test the game.
 
 No location is hard-coded in the plugin. Region IDs are metadata only; the
 Draynor boundary was already observed within a single RuneScape region.
@@ -76,6 +103,10 @@ may therefore disable this version-specific probe. Re-research that binary
 before changing the allowlist. Other agents/retransformation/custom classloaders
 are not supported. Only the four listed names are instrumented; obfuscated
 alternate/copy methods are not claimed to be covered.
+
+The Experiment 4 agent argument is also allowlisted exactly. Unknown modes fail
+closed. Normal `run` attaches with no behavior-changing mode; only
+`runAreaFadeTest` emits the narrowly scoped incoming-fade substitution.
 
 ## Plugin observations
 
@@ -134,9 +165,10 @@ Illustrative shapes, not measured results:
 .\gradlew.bat build
 ```
 
-The build includes plugin snapshot tests, synthetic transformer tests, a real
-`-javaagent`/`-Xverify:all` class-loading smoke test against the resolved client,
-and fail-closed startup tests. Smoke tests do not initialize the target game
+The build includes plugin snapshot tests, synthetic transformer tests (including
+observer-mode pass-through and all Experiment 4 match/non-match cases), real
+`-javaagent`/`-Xverify:all` class-loading smoke tests for both agent modes against
+the resolved client, and fail-closed startup tests. Smoke tests do not initialize the target game
 classes, invoke their music methods, launch RuneLite, log in, or cross boundaries.
 Test logs go under `build/test-results/`, not the live experiment file.
 
@@ -144,5 +176,6 @@ Agent implementation/dependencies live only in the `coreProbe` source set;
 its tests live in `coreProbeTest`. Neither the ordinary plugin jar nor the
 example-style `shadowJar` includes the agent or its ASM dependencies. The
 `shadowJar`/IDE launcher does not automatically attach the agent: use Gradle
-`run` for Experiment 3. No Gradle-cache or official jar is modified in place,
-and nothing is submitted upstream.
+`run` for observation or `runAreaFadeTest` for the explicit Experiment 4 mode.
+No Gradle-cache or official jar is modified in place, and nothing is submitted
+upstream.

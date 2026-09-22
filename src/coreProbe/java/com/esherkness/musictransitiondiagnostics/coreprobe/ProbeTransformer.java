@@ -26,6 +26,7 @@ final class ProbeTransformer implements ClassFileTransformer
 {
 	static final String LOGGER = CoreProbeLog.class.getName().replace('.', '/');
 	static final String LOG_DESCRIPTOR = "(Ljava/lang/String;Ljava/util/ArrayList;IIIII)V";
+	static final String FADE_DESCRIPTOR = "(IIIIZ)I";
 	static final Map<String, String> TARGETS = new LinkedHashMap<>();
 	static
 	{
@@ -41,7 +42,8 @@ final class ProbeTransformer implements ClassFileTransformer
 	private final Map<String, byte[]> instrumented;
 	private volatile boolean disabled;
 
-	ProbeTransformer(Path jar, ClassLoader loader, Map<String, byte[]> originals)
+	ProbeTransformer(Path jar, ClassLoader loader, Map<String, byte[]> originals,
+		boolean areaFadeTest)
 	{
 		this.jar = jar;
 		this.expectedLoader = loader;
@@ -50,7 +52,7 @@ final class ProbeTransformer implements ClassFileTransformer
 		// Validate/prepare ALL four methods before registering ANY transformation.
 		for (String owner : TARGETS.keySet())
 		{
-			instrumented.put(owner, instrument(owner, originals.get(owner)));
+			instrumented.put(owner, instrument(owner, originals.get(owner), areaFadeTest));
 		}
 	}
 
@@ -84,6 +86,11 @@ final class ProbeTransformer implements ClassFileTransformer
 	}
 
 	static byte[] instrument(String owner, byte[] original)
+	{
+		return instrument(owner, original, false);
+	}
+
+	static byte[] instrument(String owner, byte[] original, boolean areaFadeTest)
 	{
 		if (original == null || !TARGETS.containsKey(owner))
 		{
@@ -130,6 +137,19 @@ final class ProbeTransformer implements ClassFileTransformer
 				: new InsnNode(Opcodes.ICONST_0));
 		}
 		entry.add(new MethodInsnNode(Opcodes.INVOKESTATIC, LOGGER, "enter", LOG_DESCRIPTOR, false));
+		if (areaFadeTest && owner.equals("ij"))
+		{
+			// Only the explicit Experiment 4 variant writes an argument local.
+			// The helper returns the original value for every non-match/failure.
+			entry.add(new VarInsnNode(Opcodes.ILOAD, 1));
+			entry.add(new VarInsnNode(Opcodes.ILOAD, 2));
+			entry.add(new VarInsnNode(Opcodes.ILOAD, 3));
+			entry.add(new VarInsnNode(Opcodes.ILOAD, 4));
+			entry.add(new VarInsnNode(Opcodes.ILOAD, 5));
+			entry.add(new MethodInsnNode(Opcodes.INVOKESTATIC, LOGGER,
+				"effectiveIncomingFade", FADE_DESCRIPTOR, false));
+			entry.add(new VarInsnNode(Opcodes.ISTORE, 4));
+		}
 		entry.add(end);
 		entry.add(new JumpInsnNode(Opcodes.GOTO, resume));
 		entry.add(handler);

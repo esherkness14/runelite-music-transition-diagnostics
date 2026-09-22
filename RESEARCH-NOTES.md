@@ -422,10 +422,74 @@ IDs equal varp track IDs.
 
 ### Runtime results
 
-**Not yet tested.** No RuneScape login, Draynor crossing, live natural progression,
-or playback manipulation was performed in this implementation pass. Automated
-fixture calls and class-loading smoke checks are not Experiment 3 gameplay data.
+The user's live Experiment 3 run produced the following observations:
 
-User command: `.\gradlew.bat run`. Confirm `ARMED` / four `TRANSFORMED` statuses,
-then perform the manual comparison described in README. Record IDs, timings,
-caller, and relative ordering for each direction and natural progression here.
+- Entering Draynor Manor and returning outside each reached `ij.af` with the
+  accepted timing tuple `0,60,60,0` and `specialRoute=false`. Both requests
+  originated through the packet / `client.ia` path.
+- The 60-step outgoing transition corresponded observationally to roughly
+  1.2–1.3 seconds before the old active MIDI request disappeared. This is an
+  empirical correlation; these integer steps are not being relabeled as
+  milliseconds.
+- Natural progression first requested archive `[147]` with `0,20,0,0` while
+  `MUSIC_CURRENT_TRACK` became `-1`. About 1.18 seconds later, request `[151]`
+  used `0,0,0,0` while `MUSIC_CURRENT_TRACK` became `3072`.
+- Archive 147's content and role have not been established. In particular, do
+  **not** label it as silence from this evidence.
+- Both the area replacement and the next-natural-song request supplied
+  `incomingFade=0`.
+
+These data confirm that the tested area and natural paths converge on the same
+timing-capable request machinery with different timing tuples. They do not prove
+that `0,60,60,0` is a universal area signature, nor that archive IDs map directly
+to the track varp.
+
+## Experiment 4: opt-in area incoming-fade override (2026-09-22)
+
+### Question
+
+Does the already-existing incoming-fade parameter produce a smooth fade-in if
+the exact, repeatedly observed Draynor area tuple is changed from `0,60,60,0`
+to `0,60,60,60` at `ij.af` entry?
+
+### Deliberately narrow intervention
+
+- Ordinary `.\gradlew.bat run` still builds the observation-only transformer;
+  it does not emit bytecode that writes an argument local.
+- `.\gradlew.bat runAreaFadeTest` passes the explicit agent mode
+  `area-incoming-fade-test`. Only that transformer variant can replace an
+  argument, and only when `specialRoute == false` and all four original timings
+  are exactly `0,60,60,0`.
+- The first three timings are preserved and only `incomingFade` changes from 0
+  to 60. Natural tuples `0,20,0,0` and `0,0,0,0`, special/jingle routes, and all
+  other timing combinations pass through unchanged.
+- Every accepted override writes one audit line containing both
+  `originalTimings=[0,60,60,0]` and `effectiveTimings=[0,60,60,60]`. If the
+  audit write fails, the original incoming-fade value is returned.
+- The Experiment 3 full-jar hash, unique-resource, exact-signature, classloader,
+  provenance, original-byte, and not-already-loaded checks remain in force.
+  Unknown agent modes disable the probe rather than guessing.
+
+This is a controlled signature-matching experiment, not a proposed general
+area detector. It adds no silence gap, does not change outgoing fade, and does
+not write volume, varps, scripts, track selection, or any other client state.
+
+### Automated verification
+
+- `.\gradlew.bat build` passed with 12 core-probe unit tests (zero failures),
+  the plugin tests, fail-closed startup checks, and both agent-mode smoke tests.
+- Synthetic execution proves observation mode preserves `0,60,60,0`; opt-in
+  mode changes only its incoming fade; both natural tuples, a special route,
+  and one-at-a-time unrelated tuple variations pass through unchanged. The
+  fixture's original body executes exactly once after an accepted override.
+- Separate `-Xverify:all` processes loaded all four transformed classes from the
+  verified injected-client jar in `OBSERVE_ONLY` and
+  `AREA_INCOMING_FADE_TEST` modes. No game method was invoked.
+
+### Runtime results
+
+**Not live-tested in this implementation pass, by request.** Automated tests
+exercise the behavior on synthetic methods only; a real-client smoke test loads
+and verifies transformed classes but never invokes their game methods. Record
+the eventual audible result and probe ordering here without promoting the
+signature to a general architecture.

@@ -16,18 +16,33 @@ import java.util.jar.JarFile;
 /** premain is used only by Gradle run and the isolated probe smoke tests. */
 public final class CoreProbeAgent
 {
+	static final String AREA_FADE_TEST_MODE = "area-incoming-fade-test";
 	static final String EXPECTED_SHA256 =
 		"25f42961c400bd9dfff1554402441c0ba6d1cffd011163cb9b0b4c42ae194f85";
 
 	private CoreProbeAgent() { }
 
-	public static void premain(String ignoredArguments, Instrumentation instrumentation)
+	public static void premain(String agentArguments, Instrumentation instrumentation)
 	{
 		try
 		{
 			CoreProbeLog.initialize(Path.of(System.getProperty("musicCoreProbe.log",
 				"build/music-core-probe.log")));
 			Runtime.getRuntime().addShutdownHook(new Thread(CoreProbeLog::close, "music-core-probe-close"));
+			final boolean areaFadeTest;
+			if (agentArguments == null || agentArguments.isEmpty())
+			{
+				areaFadeTest = false;
+			}
+			else if (AREA_FADE_TEST_MODE.equals(agentArguments))
+			{
+				areaFadeTest = true;
+			}
+			else
+			{
+				CoreProbeLog.disable("unsupported-agent-mode");
+				return;
+			}
 			ClassLoader loader = ClassLoader.getSystemClassLoader();
 			List<URL> resources = Collections.list(loader.getResources("rj.class"));
 			if (resources.size() != 1 || !resources.get(0).getProtocol().equals("jar"))
@@ -71,9 +86,9 @@ public final class CoreProbeAgent
 					return;
 				}
 			}
-			ProbeTransformer transformer = new ProbeTransformer(jar, loader, originals);
+			ProbeTransformer transformer = new ProbeTransformer(jar, loader, originals, areaFadeTest);
 			instrumentation.addTransformer(transformer, false);
-			CoreProbeLog.arm();
+			CoreProbeLog.arm(areaFadeTest);
 		}
 		catch (Throwable ignored)
 		{

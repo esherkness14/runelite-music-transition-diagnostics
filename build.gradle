@@ -63,6 +63,18 @@ tasks.register('run', JavaExec) {
 	args "--developer-mode", "--debug"
 }
 
+// Deliberately separate from run: only this opt-in launcher asks the verified
+// native probe to replace the exact observed area's incoming-fade argument.
+tasks.register('runAreaFadeTest', JavaExec) {
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = pluginMainClass
+
+	jvmArgs "-ea"
+	args "--developer-mode", "--debug"
+	description = 'Run the dev client with the narrow Experiment 4 area fade override.'
+	group = 'application'
+}
+
 def coreProbeJar = tasks.register('coreProbeJar', Jar) {
 	archiveFileName.set('music-transition-core-probe-agent.jar')
 	destinationDirectory.set(layout.buildDirectory.dir('libs'))
@@ -78,14 +90,21 @@ def coreProbeJar = tasks.register('coreProbeJar', Jar) {
 
 // Share this wiring with the no-login smoke test so it tests real -javaagent
 // packaging/attachment, not just a mocked transformer.
-def attachCoreProbe = { JavaExec task, String logName ->
+def attachCoreProbe = { JavaExec task, String logName, String agentMode ->
 	task.dependsOn(coreProbeJar)
 	task.doFirst {
-		task.jvmArgs('-javaagent:' + coreProbeJar.get().archiveFile.get().asFile.absolutePath)
+		def agentArgument = '-javaagent:' + coreProbeJar.get().archiveFile.get().asFile.absolutePath
+		if (agentMode != null) {
+			agentArgument += '=' + agentMode
+		}
+		task.jvmArgs(agentArgument)
 		task.systemProperty('musicCoreProbe.log', layout.buildDirectory.file(logName).get().asFile.absolutePath)
 	}
 }
-tasks.named('run', JavaExec) { attachCoreProbe(it, 'music-core-probe.log') }
+tasks.named('run', JavaExec) { attachCoreProbe(it, 'music-core-probe.log', null) }
+tasks.named('runAreaFadeTest', JavaExec) {
+	attachCoreProbe(it, 'music-core-probe.log', 'area-incoming-fade-test')
+}
 
 tasks.register('coreProbeTest', Test) {
 	dependsOn coreProbeJar
@@ -103,7 +122,15 @@ tasks.register('coreProbeSmokeTest', JavaExec) {
 	classpath = sourceSets.coreProbeTest.runtimeClasspath + configurations.testRuntimeClasspath
 	mainClass = 'com.esherkness.musictransitiondiagnostics.coreprobe.ProbeSmokeMain'
 	jvmArgs '-Xverify:all'
-	attachCoreProbe(it, 'test-results/core-probe-smoke.log')
+	attachCoreProbe(it, 'test-results/core-probe-smoke.log', null)
+}
+
+tasks.register('coreProbeAreaFadeSmokeTest', JavaExec) {
+	dependsOn tasks.named('coreProbeTestClasses')
+	classpath = sourceSets.coreProbeTest.runtimeClasspath + configurations.testRuntimeClasspath
+	mainClass = 'com.esherkness.musictransitiondiagnostics.coreprobe.ProbeSmokeMain'
+	jvmArgs '-Xverify:all'
+	attachCoreProbe(it, 'test-results/core-probe-area-fade-smoke.log', 'area-incoming-fade-test')
 }
 
 tasks.register('coreProbeClosedSmokeTest', JavaExec) {
@@ -112,12 +139,13 @@ tasks.register('coreProbeClosedSmokeTest', JavaExec) {
 	classpath = sourceSets.coreProbeTest.runtimeClasspath
 	mainClass = 'com.esherkness.musictransitiondiagnostics.coreprobe.ProbeSmokeMain'
 	args 'expect-disabled'
-	attachCoreProbe(it, 'test-results/core-probe-closed-smoke.log')
+	attachCoreProbe(it, 'test-results/core-probe-closed-smoke.log', null)
 }
 
 tasks.named('assemble') { dependsOn coreProbeJar }
 tasks.named('check') {
-	dependsOn tasks.named('coreProbeTest'), tasks.named('coreProbeSmokeTest'), tasks.named('coreProbeClosedSmokeTest')
+	dependsOn tasks.named('coreProbeTest'), tasks.named('coreProbeSmokeTest'),
+		tasks.named('coreProbeAreaFadeSmokeTest'), tasks.named('coreProbeClosedSmokeTest')
 }
 
 tasks.register('shadowJar', Jar) {
