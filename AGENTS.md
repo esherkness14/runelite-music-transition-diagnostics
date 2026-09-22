@@ -48,10 +48,18 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   calls for them.
 - Do not submit to RuneLite or Plugin Hub, and do not commit or push unless the
   user explicitly requests it.
-- Never commit or inspect RuneLite/Jagex credential files, session files,
-  account data, tokens, or other secrets. In particular, do not open or search
-  files under `.runelite` that may contain credentials or session material.
+- Never commit or inspect `.runelite/credentials.properties`, RuneLite/Jagex
+  session/account/token material, or similar secrets. Never search those files
+  or include them in diagnostic bundles.
+- `.runelite/logs/client.log` may be inspected when explicitly needed for this
+  project. Keep inspection focused on diagnostic lines; do not expose incidental
+  account/session information. `build/music-core-probe.log` is also an intended
+  diagnostic source, not a credential file.
+- Experiment 3 authorizes development-only bytecode instrumentation for logging
+  the four verified native music entry points. It must preserve all arguments,
+  returns, exceptions, and music state; no fade control or intentional delays.
+  Keep the agent outside main/plugin artifacts and reject unknown client hashes
+  or signatures. See `RESEARCH-NOTES.md` for the exact pinned artifact.
 - Preserve Java 11 compatibility and the official `runelite/example-plugin`
   Gradle structure. Use `./gradlew build` (or `.\gradlew.bat build` on Windows)
   after code changes.
-

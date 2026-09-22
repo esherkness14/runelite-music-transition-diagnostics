@@ -18,15 +18,31 @@ repositories {
 def runeLiteVersion = 'latest.release'
 def pluginMainClass = 'com.esherkness.musictransitiondiagnostics.MusicTransitionDiagnosticsPluginTest'
 
+// The native probe is deliberately outside main/test plugin output. Its ASM
+// dependencies and premain must never enter the ordinary plugin/shadow jars.
+sourceSets {
+	coreProbe
+	coreProbeTest {
+		compileClasspath += sourceSets.coreProbe.output
+		runtimeClasspath += sourceSets.coreProbe.output
+	}
+}
+
+configurations.coreProbeTestImplementation.extendsFrom(configurations.coreProbeImplementation)
+
 dependencies {
 	compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
 
 	compileOnly 'org.projectlombok:lombok:1.18.30'
 	annotationProcessor 'org.projectlombok:lombok:1.18.30'
 
-	testImplementation 'junit:junit:4.12'
+	testImplementation 'junit:junit:4.13.2'
 	testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
 	testImplementation group: 'net.runelite', name: 'jshell', version: runeLiteVersion
+
+	coreProbeImplementation 'org.ow2.asm:asm:9.10.1'
+	coreProbeImplementation 'org.ow2.asm:asm-tree:9.10.1'
+	coreProbeTestImplementation 'junit:junit:4.13.2'
 }
 
 group = 'com.esherkness.musictransitiondiagnostics'
@@ -45,6 +61,63 @@ tasks.register('run', JavaExec) {
 
 	jvmArgs "-ea"
 	args "--developer-mode", "--debug"
+}
+
+def coreProbeJar = tasks.register('coreProbeJar', Jar) {
+	archiveFileName.set('music-transition-core-probe-agent.jar')
+	destinationDirectory.set(layout.buildDirectory.dir('libs'))
+	from sourceSets.coreProbe.output
+	from { configurations.coreProbeRuntimeClasspath.collect { zipTree(it) } }
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+	exclude 'META-INF/*.SF', 'META-INF/*.RSA', 'META-INF/*.DSA', '**/module-info.class'
+	manifest {
+		attributes('Premain-Class': 'com.esherkness.musictransitiondiagnostics.coreprobe.CoreProbeAgent',
+			'Can-Redefine-Classes': 'false', 'Can-Retransform-Classes': 'false')
+	}
+}
+
+// Share this wiring with the no-login smoke test so it tests real -javaagent
+// packaging/attachment, not just a mocked transformer.
+def attachCoreProbe = { JavaExec task, String logName ->
+	task.dependsOn(coreProbeJar)
+	task.doFirst {
+		task.jvmArgs('-javaagent:' + coreProbeJar.get().archiveFile.get().asFile.absolutePath)
+		task.systemProperty('musicCoreProbe.log', layout.buildDirectory.file(logName).get().asFile.absolutePath)
+	}
+}
+tasks.named('run', JavaExec) { attachCoreProbe(it, 'music-core-probe.log') }
+
+tasks.register('coreProbeTest', Test) {
+	dependsOn coreProbeJar
+	testClassesDirs = sourceSets.coreProbeTest.output.classesDirs
+	classpath = sourceSets.coreProbeTest.runtimeClasspath
+	useJUnit()
+	doFirst {
+		systemProperty 'probe.agentJar', coreProbeJar.get().archiveFile.get().asFile.absolutePath
+		systemProperty 'probe.testClasspath', sourceSets.coreProbeTest.runtimeClasspath.asPath
+	}
+}
+
+tasks.register('coreProbeSmokeTest', JavaExec) {
+	dependsOn tasks.named('coreProbeTestClasses')
+	classpath = sourceSets.coreProbeTest.runtimeClasspath + configurations.testRuntimeClasspath
+	mainClass = 'com.esherkness.musictransitiondiagnostics.coreprobe.ProbeSmokeMain'
+	jvmArgs '-Xverify:all'
+	attachCoreProbe(it, 'test-results/core-probe-smoke.log')
+}
+
+tasks.register('coreProbeClosedSmokeTest', JavaExec) {
+	dependsOn tasks.named('coreProbeTestClasses')
+	// Intentionally omit the injected client: premain must not abort main.
+	classpath = sourceSets.coreProbeTest.runtimeClasspath
+	mainClass = 'com.esherkness.musictransitiondiagnostics.coreprobe.ProbeSmokeMain'
+	args 'expect-disabled'
+	attachCoreProbe(it, 'test-results/core-probe-closed-smoke.log')
+}
+
+tasks.named('assemble') { dependsOn coreProbeJar }
+tasks.named('check') {
+	dependsOn tasks.named('coreProbeTest'), tasks.named('coreProbeSmokeTest'), tasks.named('coreProbeClosedSmokeTest')
 }
 
 tasks.register('shadowJar', Jar) {
@@ -71,4 +144,3 @@ tasks.register('shadowJar', Jar) {
 	archiveClassifier.set('shadow')
 	archiveFileName.set("${rootProject.name}-${project.version}-all.jar")
 }
-

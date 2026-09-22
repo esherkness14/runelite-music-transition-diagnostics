@@ -9,9 +9,7 @@ package com.esherkness.musictransitiondiagnostics;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayDeque;
-import java.util.Deque;
-import java.util.Locale;
+import java.util.List;
 import java.util.Objects;
 import javax.inject.Inject;
 import lombok.extern.slf4j.Slf4j;
@@ -19,8 +17,6 @@ import net.runelite.api.Client;
 import net.runelite.api.Player;
 import net.runelite.api.coords.WorldPoint;
 import net.runelite.api.events.ClientTick;
-import net.runelite.api.events.ScriptPostFired;
-import net.runelite.api.events.ScriptPreFired;
 import net.runelite.api.events.VarbitChanged;
 import net.runelite.api.events.VarClientIntChanged;
 import net.runelite.api.gameval.InterfaceID;
@@ -62,40 +58,20 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 
 	private static final String LOG_PREFIX = "[Music Transition Diagnostics]";
 
-	/** Both the look-behind buffer and live follow-up window cover about 500 ms. */
-	private static final long SCRIPT_CONTEXT_WINDOW_NANOS = 500_000_000L;
-	private static final int SCRIPT_CONTEXT_WINDOW_MILLIS = 500;
-
-	/**
-	 * Hard bounds protect normal gameplay from an unbounded event buffer and
-	 * protect a transition from producing an arbitrarily large context dump.
-	 */
-	private static final int MAX_BUFFERED_SCRIPT_EVENTS = 256;
-	private static final int MAX_AFTER_SCRIPT_EVENTS = 256;
-
 	@Inject
 	private Client client;
 
 	/** Last ClientTick sample. Null means that the next sample emits the baseline. */
 	private MusicState previousState;
 
-	/** Recent script IDs are retained in memory but are not normally logged. */
-	private final Deque<ScriptObservation> recentScriptEvents = new ArrayDeque<>();
-
-	/** Last current-track value used to avoid duplicate event/tick context dumps. */
-	private Integer scriptContextTrackValue;
-
-	/** Non-null only during the approximately 500 ms follow-up logging window. */
-	private ScriptContext activeScriptContext;
+	private List<ActiveMidiSnapshot> previousMidiRequests;
 
 	@Override
 	protected void startUp()
 	{
-		// Do not carry state or script context across plugin enable cycles.
+		// Reset only our snapshots, never client state.
 		previousState = null;
-		scriptContextTrackValue = null;
-		activeScriptContext = null;
-		recentScriptEvents.clear();
+		previousMidiRequests = null;
 		logDiagnostic("LIFECYCLE_START", "state=stopped -> started");
 	}
 
@@ -104,9 +80,7 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 	{
 		logDiagnostic("LIFECYCLE_STOP", "state=started -> stopped");
 		previousState = null;
-		scriptContextTrackValue = null;
-		activeScriptContext = null;
-		recentScriptEvents.clear();
+		previousMidiRequests = null;
 	}
 
 	/**
@@ -128,14 +102,6 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 			"varpId=" + event.getVarpId()
 				+ " varbitId=" + event.getVarbitId()
 				+ " value=" + event.getValue());
-
-		if (event.getVarpId() == VarPlayerID.MUSIC_CURRENT_TRACK)
-		{
-			// Read the whole varp because event.value could represent a child varbit.
-			observeCurrentTrackForScriptContext(
-				client.getVarpValue(VarPlayerID.MUSIC_CURRENT_TRACK),
-				System.nanoTime());
-		}
 	}
 
 	/**
@@ -157,20 +123,6 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 				+ " value=" + client.getVarcIntValue(event.getIndex()));
 	}
 
-	/** Retain only the script ID and timing; intentionally do not inspect inputs. */
-	@Subscribe
-	public void onScriptPreFired(ScriptPreFired event)
-	{
-		recordScriptEvent(ScriptPhase.PRE, event.getScriptId());
-	}
-
-	/** Retain only the script ID and timing; intentionally do not inspect stacks. */
-	@Subscribe
-	public void onScriptPostFired(ScriptPostFired event)
-	{
-		recordScriptEvent(ScriptPhase.POST, event.getScriptId());
-	}
-
 	/**
 	 * ClientTick runs about every 20 ms. Sampling is intentionally cheap. After
 	 * one complete baseline line, the plugin writes no polling log line unless
@@ -180,17 +132,17 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 	@Subscribe
 	public void onClientTick(ClientTick event)
 	{
-		long nowNanos = System.nanoTime();
-		finishExpiredScriptContext(nowNanos);
-
 		MusicState currentState = readMusicState();
+		List<ActiveMidiSnapshot> currentMidiRequests =
+			ActiveMidiSnapshot.copy(client.getActiveMidiRequests());
 
 		// The first tick is a single complete baseline, not a set of changes.
 		if (previousState == null)
 		{
-			logDiagnostic("BASELINE", currentState.toDiagnosticString());
+			logDiagnostic("BASELINE", currentState.toDiagnosticString()
+				+ " ACTIVE_MIDI_REQUESTS=" + currentMidiRequests);
 			previousState = currentState;
-			scriptContextTrackValue = currentState.musicCurrentTrack;
+			previousMidiRequests = currentMidiRequests;
 			return;
 		}
 
@@ -199,16 +151,7 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 		logIntChange("VARP_MUSICMULTI_1", previousState.musicMulti1, currentState.musicMulti1);
 		logIntChange("VARP_MUSICMULTI_2", previousState.musicMulti2, currentState.musicMulti2);
 
-		if (previousState.musicCurrentTrack != currentState.musicCurrentTrack)
-		{
-			logIntChange(
-				"VARP_MUSIC_CURRENT_TRACK",
-				previousState.musicCurrentTrack,
-				currentState.musicCurrentTrack);
-
-			// This is a fallback if no matching VarbitChanged event was delivered.
-			observeCurrentTrackForScriptContext(currentState.musicCurrentTrack, nowNanos);
-		}
+		logIntChange("VARP_MUSIC_CURRENT_TRACK", previousState.musicCurrentTrack, currentState.musicCurrentTrack);
 
 		logIntChange("VARP_MUSIC_LAST_TRACK", previousState.musicLastTrack, currentState.musicLastTrack);
 		logIntChange("VARP_MUSIC_OVERRIDE_TRACK", previousState.musicOverrideTrack, currentState.musicOverrideTrack);
@@ -237,6 +180,12 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 		logStringChange("NOW_PLAYING_TEXT", previousState.nowPlayingText, currentState.nowPlayingText);
 		logIntChange("MUSIC_VOLUME", previousState.musicVolume, currentState.musicVolume);
 
+		if (!currentMidiRequests.equals(previousMidiRequests))
+		{
+			logDiagnostic("ACTIVE_MIDI_REQUESTS",
+				"old=" + previousMidiRequests + " -> new=" + currentMidiRequests);
+		}
+		previousMidiRequests = currentMidiRequests;
 		previousState = currentState;
 	}
 
@@ -291,155 +240,6 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 			|| index == VarClientID.MUSIC_CLIENT_SYNC_TIMER_TIME_PER_INTERVAL;
 	}
 
-	/**
-	 * Record every script event in memory, but emit it only while a music-track
-	 * context window is active. This keeps ordinary gameplay log volume at zero.
-	 */
-	private void recordScriptEvent(ScriptPhase phase, int scriptId)
-	{
-		long nowNanos = System.nanoTime();
-		finishExpiredScriptContext(nowNanos);
-
-		ScriptObservation observation = new ScriptObservation(
-			phase,
-			scriptId,
-			System.currentTimeMillis(),
-			nowNanos,
-			client.getTickCount());
-
-		pruneScriptBuffer(nowNanos);
-		if (recentScriptEvents.size() == MAX_BUFFERED_SCRIPT_EVENTS)
-		{
-			recentScriptEvents.removeFirst();
-		}
-		recentScriptEvents.addLast(observation);
-
-		ScriptContext context = activeScriptContext;
-		if (context == null || nowNanos > context.deadlineNanos)
-		{
-			return;
-		}
-
-		if (context.loggedAfterEvents < MAX_AFTER_SCRIPT_EVENTS)
-		{
-			logScriptObservation("SCRIPT_CONTEXT_AFTER", observation, context);
-			context.loggedAfterEvents++;
-		}
-		else
-		{
-			context.afterTruncated = true;
-		}
-	}
-
-	/**
-	 * Track changes may be noticed first by VarbitChanged or by ClientTick. A
-	 * single remembered value makes either path start exactly one context dump.
-	 */
-	private void observeCurrentTrackForScriptContext(int newTrack, long changeNanos)
-	{
-		if (scriptContextTrackValue == null)
-		{
-			scriptContextTrackValue = newTrack;
-			return;
-		}
-
-		int oldTrack = scriptContextTrackValue;
-		if (oldTrack == newTrack)
-		{
-			return;
-		}
-
-		scriptContextTrackValue = newTrack;
-		startScriptContext(oldTrack, newTrack, changeNanos);
-	}
-
-	private void startScriptContext(int oldTrack, int newTrack, long changeNanos)
-	{
-		if (activeScriptContext != null)
-		{
-			finishScriptContext("superseded-by-next-track-change");
-		}
-
-		pruneScriptBuffer(changeNanos);
-		ScriptContext context = new ScriptContext(oldTrack, newTrack, changeNanos);
-
-		logDiagnostic(
-			"SCRIPT_CONTEXT_BEFORE_BEGIN",
-			context.trackDetails()
-				+ " windowMs=" + SCRIPT_CONTEXT_WINDOW_MILLIS
-				+ " capturedEvents=" + recentScriptEvents.size()
-				+ " bufferCapacity=" + MAX_BUFFERED_SCRIPT_EVENTS);
-
-		for (ScriptObservation observation : recentScriptEvents)
-		{
-			logScriptObservation("SCRIPT_CONTEXT_BEFORE", observation, context);
-		}
-
-		logDiagnostic(
-			"SCRIPT_CONTEXT_BEFORE_END",
-			context.trackDetails() + " capturedEvents=" + recentScriptEvents.size());
-
-		activeScriptContext = context;
-		logDiagnostic(
-			"SCRIPT_CONTEXT_AFTER_BEGIN",
-			context.trackDetails()
-				+ " windowMs=" + SCRIPT_CONTEXT_WINDOW_MILLIS
-				+ " eventLimit=" + MAX_AFTER_SCRIPT_EVENTS);
-	}
-
-	private void pruneScriptBuffer(long nowNanos)
-	{
-		long cutoffNanos = nowNanos - SCRIPT_CONTEXT_WINDOW_NANOS;
-		while (!recentScriptEvents.isEmpty()
-			&& recentScriptEvents.peekFirst().nanoTime < cutoffNanos)
-		{
-			recentScriptEvents.removeFirst();
-		}
-	}
-
-	private void finishExpiredScriptContext(long nowNanos)
-	{
-		if (activeScriptContext != null && nowNanos > activeScriptContext.deadlineNanos)
-		{
-			finishScriptContext("window-complete");
-		}
-	}
-
-	private void finishScriptContext(String reason)
-	{
-		ScriptContext context = activeScriptContext;
-		if (context == null)
-		{
-			return;
-		}
-
-		activeScriptContext = null;
-		logDiagnostic(
-			"SCRIPT_CONTEXT_AFTER_END",
-			context.trackDetails()
-				+ " loggedEvents=" + context.loggedAfterEvents
-				+ " truncated=" + context.afterTruncated
-				+ " reason=" + reason);
-	}
-
-	private void logScriptObservation(
-		String eventType,
-		ScriptObservation observation,
-		ScriptContext context)
-	{
-		double offsetMillis =
-			(observation.nanoTime - context.changeNanos) / 1_000_000.0;
-
-		logDiagnostic(
-			eventType,
-			context.trackDetails()
-				+ " phase=" + observation.phase
-				+ " scriptId=" + observation.scriptId
-				+ " scriptTimestamp="
-				+ TIMESTAMP_FORMAT.format(Instant.ofEpochMilli(observation.timestampMillis))
-				+ " offsetMs=" + String.format(Locale.ROOT, "%+.3f", offsetMillis)
-				+ " scriptTick=" + observation.tickCount);
-	}
 
 	private void logIntChange(String changeType, int oldValue, int newValue)
 	{
@@ -471,9 +271,10 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 		int regionId = worldPoint == null ? -1 : worldPoint.getRegionID();
 
 		log.info(
-			"{} timestamp={} tick={} worldPoint={} regionId={} type={} {}",
+			"{} timestamp={} monoNanos={} tick={} worldPoint={} regionId={} type={} {}",
 			LOG_PREFIX,
 			TIMESTAMP_FORMAT.format(Instant.now()),
+			System.nanoTime(),
 			client.getTickCount(),
 			worldPoint == null ? "<unavailable>" : worldPoint,
 			regionId,
@@ -496,59 +297,6 @@ public class MusicTransitionDiagnosticsPlugin extends Plugin
 			.replace("\"", "\\\"") + '"';
 	}
 
-	private enum ScriptPhase
-	{
-		PRE,
-		POST
-	}
-
-	/** One compact entry in the bounded in-memory rolling script buffer. */
-	private static final class ScriptObservation
-	{
-		private final ScriptPhase phase;
-		private final int scriptId;
-		private final long timestampMillis;
-		private final long nanoTime;
-		private final int tickCount;
-
-		private ScriptObservation(
-			ScriptPhase phase,
-			int scriptId,
-			long timestampMillis,
-			long nanoTime,
-			int tickCount)
-		{
-			this.phase = phase;
-			this.scriptId = scriptId;
-			this.timestampMillis = timestampMillis;
-			this.nanoTime = nanoTime;
-			this.tickCount = tickCount;
-		}
-	}
-
-	/** State for one bounded follow-up window associated with a track change. */
-	private static final class ScriptContext
-	{
-		private final int oldTrack;
-		private final int newTrack;
-		private final long changeNanos;
-		private final long deadlineNanos;
-		private int loggedAfterEvents;
-		private boolean afterTruncated;
-
-		private ScriptContext(int oldTrack, int newTrack, long changeNanos)
-		{
-			this.oldTrack = oldTrack;
-			this.newTrack = newTrack;
-			this.changeNanos = changeNanos;
-			this.deadlineNanos = changeNanos + SCRIPT_CONTEXT_WINDOW_NANOS;
-		}
-
-		private String trackDetails()
-		{
-			return "trackOld=" + oldTrack + " trackNew=" + newTrack;
-		}
-	}
 
 	/** Immutable snapshot used only for adjacent ClientTick comparisons. */
 	private static final class MusicState

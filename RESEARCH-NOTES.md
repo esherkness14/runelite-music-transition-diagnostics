@@ -337,3 +337,95 @@ ended; it is not automatically advance notice with which to fade the old song.
 
 Documentation-only verification: review the diff and run `git diff --check`.
 No build is necessary for this pass: no plugin source or build files changed.
+
+## Experiment 3: observation-only native request probe (2026-09-22)
+
+### Purpose and authorization
+
+Measure the actual IDs/timing arguments used for both directions of the Draynor
+Manor gate crossing and natural progression. The user explicitly authorized a
+development-only Java instrumentation agent for this experiment, not playback
+control or a live test performed by the agent.
+
+### Implemented instrumentation
+
+- Separate `coreProbe` Gradle source set with `CoreProbeAgent`, `ProbeTransformer`,
+  and `CoreProbeLog`. A self-contained ASM 9.10.1 agent jar is built at
+  `build/libs/music-transition-core-probe-agent.jar` and automatically attached
+  by the existing `run` task via `-javaagent`. Agent sources/dependencies are not
+  included in the ordinary plugin or example-style shadow artifact.
+- `premain` verifies the full 1.12.39 injected-client SHA-256 recorded above,
+  unique target class resources, all four exact static signatures, and absence
+  of already-loaded targets. The load-time transformer checks original bytes,
+  jar provenance, and application classloader again. Unsupported/missing/changed
+  definitions produce an obvious `DISABLED` status and leave the client free to
+  launch. No on-disk dependency, Gradle-cache jar, or official jar is patched.
+- Exactly these method entries are instrumented:
+  - `rj.bc(ArrayList, int, int, int, int, byte)` / `(Ljava/util/ArrayList;IIIIB)V`
+  - `ij.af(ArrayList, int, int, int, int, boolean, int)` / `(Ljava/util/ArrayList;IIIIZI)V`
+  - `bk.ab(int, int, byte)` / `(IIB)V`
+  - `im.as(int, int, int, int, int)` / `(IIIII)V`
+- `rj.bc` records a copied ID list and `outgoingDelay`, `outgoingFade`,
+  `incomingDelay`, `incomingFade`. `ij.af` records request count, those timings,
+  and `specialRoute`. It deliberately does not reflect into internal requests.
+  `bk.ab` names only outgoing delay/fade and logs the remaining raw `arg3`;
+  `im.as` logs raw `arg1` through `arg5` without inventing semantic names.
+- Each invocation emits one `[Music Transition Core Probe]` line with UTC
+  milliseconds, `nanoTime`, and the immediate caller. Only `client.ia`/`client.mh`
+  classify as `PACKET`, and only `ee.bt` as `SCRIPT`; other callers are `OTHER`.
+  Thus an `ij.af` caller of `rj.bc` is `OTHER`, not an inferred upstream category.
+  No full stacks, unrelated script arguments, or packet payloads are dumped.
+- Core lines go to stdout and `build/music-core-probe.log`, freshly truncated by
+  premain for each dev-client run and flushed per line. `build/` is already
+  ignored. Status lines distinguish preflight/transform success from invocation
+  records. Run one dev client per checkout; copy its log before restarting.
+- The plugin keeps all music varp/varclient/widget/volume observations and adds
+  ordered, immutable copies of public `(archiveId, isJingle)` values on ClientTick.
+  Neither the live list nor request objects are retained. Baseline includes the
+  list; later `ACTIVE_MIDI_REQUESTS` lines appear only when values/order change.
+  Plugin lines now carry `monoNanos` from the same JVM clock as the core probe.
+- Removed the Experiment 2 runtime script subscriptions/buffer/context logging.
+  Its findings are preserved above; its implementation remains in Git history.
+
+### Observation versus behavior changes
+
+The transformer adds an entry callback and an exception boundary around that
+callback. It loads copies of arguments onto the operand stack, never writes
+argument locals, never replaces return values, and always proceeds to the
+original body. Original-body exceptions are outside the diagnostic boundary.
+There are no music-state writes, skipped methods, or intentional sleeps/waits.
+Bytecode IS modified in memory; this is not an assertion of zero overhead:
+clock/stack inspection, formatting, stdout and prompt file flushing cost time.
+Those measurement effects must be considered when comparing timings.
+
+The probe is intentionally version-specific and load-time-only. Future client
+releases, alternate obfuscated copies, custom classloaders, and competing agents
+are not assumed compatible. `latest.release` remains in the development build;
+a new client needs fresh investigation before updating the hash/signatures.
+No inference is made that an active request is already audible or that archive
+IDs equal varp track IDs.
+
+### Automated verification
+
+- `.\gradlew.bat build` passed with Java 11 target bytecode (build JVM: JDK 21).
+- Synthetic targets test one line per entry, preservation of all argument
+  values/list identity and original exceptions, logging-failure isolation,
+  signature/provenance rejection, caller extraction/classification, and fresh logs.
+- Plugin tests check copied immutable MIDI snapshots, ordering/jingle changes,
+  a single baseline, change-only output, and monotonic metadata.
+- A forked `-javaagent` / `-Xverify:all` smoke test loaded and resolved all four
+  real transformed classes from the verified jar without initialization or music
+  method invocation. All four reported `TRANSFORMED`.
+- Missing-client and forged-version-jar tests confirm disabled premain still
+  allows application main to run. Test logs are separate under
+  `build/test-results/`, not the live experiment log.
+
+### Runtime results
+
+**Not yet tested.** No RuneScape login, Draynor crossing, live natural progression,
+or playback manipulation was performed in this implementation pass. Automated
+fixture calls and class-loading smoke checks are not Experiment 3 gameplay data.
+
+User command: `.\gradlew.bat run`. Confirm `ARMED` / four `TRANSFORMED` statuses,
+then perform the manual comparison described in README. Record IDs, timings,
+caller, and relative ordering for each direction and natural progression here.
