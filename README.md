@@ -2,8 +2,8 @@
 
 A temporary RuneLite development plugin comparing area-triggered music
 replacement with natural end-of-track progression. The ordinary launcher is
-read-only. Experiment 4 adds a separate, explicitly opt-in launcher for one
-narrow incoming-fade test at the verified native request entry.
+read-only. Experiment 5 extends the separate opt-in launcher into a bounded
+incoming-fade tuning harness at the verified native request entry.
 
 Neither mode selects tracks, changes volume/varps, runs scripts, or contains a
 geographic music map. Normal `run` changes in-memory bytecode only enough to
@@ -46,28 +46,44 @@ the packet / `client.ia` path. Natural progression first requested archive 147
 with `0,20,0,0`, then about 1.18 seconds later archive 151 with `0,0,0,0`.
 Archive 147's content/role is unknown and is not labeled as silence.
 
-## Run Experiment 4 (opt-in behavior change)
+## Run Experiment 5 (opt-in area fade tuning)
 
 ```powershell
 .\gradlew.bat runAreaFadeTest
+.\gradlew.bat runAreaFadeTest -PareaIncomingFade=90
+.\gradlew.bat runAreaFadeTest -PareaIncomingFade=120
 ```
 
 On macOS/Linux use `./gradlew runAreaFadeTest`. This is not the normal launcher.
-It retains all Experiment 3 logging and changes `ij.af` only when:
+The first command defaults to 120 native scheduler steps. The property accepts
+integers from 1 through 300; malformed, negative, zero, and larger values fail
+before the client launches. These values are scheduler steps, not milliseconds.
+
+The harness retains all Experiment 3 logging and changes `ij.af` only when:
 
 - `specialRoute == false`, and
 - the complete original tuple is exactly `0,60,60,0`.
 
-For that exact match only, the effective tuple becomes `0,60,60,60`: outgoing
-delay/fade and incoming delay are preserved, and only incoming fade changes.
+For that exact match only, the effective tuple becomes `0,60,60,<configured>`:
+outgoing delay 0, outgoing fade 60, and incoming delay 60 are preserved.
 The probe logs both `originalTimings=[0,60,60,0]` and
-`effectiveTimings=[0,60,60,60]`. Natural tuples `0,20,0,0` and `0,0,0,0`,
+`effectiveTimings=[0,60,60,<configured>]`, and its `ARMED` line reports
+`configuredIncomingFade=<configured>`. Natural tuples `0,20,0,0` and `0,0,0,0`,
 special/jingle requests, and unrelated timings are untouched.
 
-This signature match is a controlled experiment based on one observed boundary,
-not the final plugin's area-detection design. It adds no silence gap and does not
-change the outgoing fade. The user must perform any RuneScape login/boundary test
-manually; the build/tests do not launch or live-test the game.
+The Experiment 4 live test successfully applied 60 steps at both Draynor
+directions and other tested boundaries involving archives 127, 151, and 107.
+The user reported a probably audible but subtle fade-in; naturally quiet track
+introductions make it harder to judge. The earlier 60-step outgoing transition
+corresponded observationally to roughly 1.2–1.3 seconds before the old active
+MIDI request disappeared, but this is not a milliseconds-to-steps conversion.
+Archive 151 appeared with `0,0,0,0` during natural progression and `0,60,60,0`
+at an area boundary, showing that timings depend on request context.
+
+This signature match is a controlled experiment, not the final plugin's area
+detection design. It adds no silence gap. Login/startup fading remains a future
+question. The user must perform any RuneScape test manually; the build/tests do
+not launch or live-test the game.
 
 No location is hard-coded in the plugin. Region IDs are metadata only; the
 Draynor boundary was already observed within a single RuneScape region.
@@ -104,9 +120,10 @@ before changing the allowlist. Other agents/retransformation/custom classloaders
 are not supported. Only the four listed names are instrumented; obfuscated
 alternate/copy methods are not claimed to be covered.
 
-The Experiment 4 agent argument is also allowlisted exactly. Unknown modes fail
-closed. Normal `run` attaches with no behavior-changing mode; only
-`runAreaFadeTest` emits the narrowly scoped incoming-fade substitution.
+The opt-in agent mode and 1–300 step value are validated independently by
+Gradle and the agent. Unknown or invalid arguments fail closed. Normal `run`
+attaches with no behavior-changing mode; only `runAreaFadeTest` emits the
+narrowly scoped incoming-fade substitution.
 
 ## Plugin observations
 
@@ -166,7 +183,8 @@ Illustrative shapes, not measured results:
 ```
 
 The build includes plugin snapshot tests, synthetic transformer tests (including
-observer-mode pass-through and all Experiment 4 match/non-match cases), real
+observer-mode pass-through, configured 60/90/120 values, invalid inputs, and
+nonmatching cases), real
 `-javaagent`/`-Xverify:all` class-loading smoke tests for both agent modes against
 the resolved client, and fail-closed startup tests. Smoke tests do not initialize the target game
 classes, invoke their music methods, launch RuneLite, log in, or cross boundaries.
@@ -176,6 +194,6 @@ Agent implementation/dependencies live only in the `coreProbe` source set;
 its tests live in `coreProbeTest`. Neither the ordinary plugin jar nor the
 example-style `shadowJar` includes the agent or its ASM dependencies. The
 `shadowJar`/IDE launcher does not automatically attach the agent: use Gradle
-`run` for observation or `runAreaFadeTest` for the explicit Experiment 4 mode.
+`run` for observation or `runAreaFadeTest` for the explicit tuning mode.
 No Gradle-cache or official jar is modified in place, and nothing is submitted
 upstream.

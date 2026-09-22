@@ -17,6 +17,7 @@ import java.util.jar.JarFile;
 public final class CoreProbeAgent
 {
 	static final String AREA_FADE_TEST_MODE = "area-incoming-fade-test";
+	static final int MAX_INCOMING_FADE = 300;
 	static final String EXPECTED_SHA256 =
 		"25f42961c400bd9dfff1554402441c0ba6d1cffd011163cb9b0b4c42ae194f85";
 
@@ -29,18 +30,14 @@ public final class CoreProbeAgent
 			CoreProbeLog.initialize(Path.of(System.getProperty("musicCoreProbe.log",
 				"build/music-core-probe.log")));
 			Runtime.getRuntime().addShutdownHook(new Thread(CoreProbeLog::close, "music-core-probe-close"));
-			final boolean areaFadeTest;
-			if (agentArguments == null || agentArguments.isEmpty())
+			final Integer incomingFade;
+			try
 			{
-				areaFadeTest = false;
+				incomingFade = parseIncomingFade(agentArguments);
 			}
-			else if (AREA_FADE_TEST_MODE.equals(agentArguments))
+			catch (IllegalArgumentException rejected)
 			{
-				areaFadeTest = true;
-			}
-			else
-			{
-				CoreProbeLog.disable("unsupported-agent-mode");
+				CoreProbeLog.disable("invalid-agent-mode-or-incoming-fade");
 				return;
 			}
 			ClassLoader loader = ClassLoader.getSystemClassLoader();
@@ -86,9 +83,9 @@ public final class CoreProbeAgent
 					return;
 				}
 			}
-			ProbeTransformer transformer = new ProbeTransformer(jar, loader, originals, areaFadeTest);
+			ProbeTransformer transformer = new ProbeTransformer(jar, loader, originals, incomingFade != null);
 			instrumentation.addTransformer(transformer, false);
-			CoreProbeLog.arm(areaFadeTest);
+			CoreProbeLog.arm(incomingFade);
 		}
 		catch (Throwable ignored)
 		{
@@ -96,6 +93,31 @@ public final class CoreProbeAgent
 			try { CoreProbeLog.disable("preflight-failed"); }
 			catch (Throwable alsoIgnored) { }
 		}
+	}
+
+	/** Null means the ordinary observation-only launcher. */
+	static Integer parseIncomingFade(String agentArguments)
+	{
+		if (agentArguments == null || agentArguments.isEmpty())
+		{
+			return null;
+		}
+		String prefix = AREA_FADE_TEST_MODE + ":";
+		if (!agentArguments.startsWith(prefix))
+		{
+			throw new IllegalArgumentException("unsupported agent mode");
+		}
+		String raw = agentArguments.substring(prefix.length());
+		if (!raw.matches("[1-9][0-9]{0,2}"))
+		{
+			throw new IllegalArgumentException("invalid incoming fade syntax");
+		}
+		int value = Integer.parseInt(raw);
+		if (value > MAX_INCOMING_FADE)
+		{
+			throw new IllegalArgumentException("incoming fade exceeds maximum");
+		}
+		return value;
 	}
 
 	static String sha256(byte[] bytes) throws Exception

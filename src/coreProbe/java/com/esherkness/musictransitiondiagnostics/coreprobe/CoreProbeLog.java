@@ -20,7 +20,7 @@ public final class CoreProbeLog
 	private static final StackWalker WALKER = StackWalker.getInstance();
 	private static BufferedWriter file;
 	private static volatile boolean enabled;
-	private static volatile boolean areaFadeTest;
+	private static volatile int configuredIncomingFade = -1;
 	private static boolean disabledReported;
 
 	private CoreProbeLog() { }
@@ -36,7 +36,7 @@ public final class CoreProbeLog
 	static synchronized void initialize(Path path) throws Exception
 	{
 		enabled = false;
-		areaFadeTest = false;
+		configuredIncomingFade = -1;
 		disabledReported = false;
 		if (file != null)
 		{
@@ -50,15 +50,19 @@ public final class CoreProbeLog
 
 	static void arm()
 	{
-		arm(false);
+		arm(null);
 	}
 
-	static void arm(boolean enableAreaFadeTest)
+	static void arm(Integer incomingFade)
 	{
-		areaFadeTest = enableAreaFadeTest;
+		if (incomingFade != null && (incomingFade < 1 || incomingFade > CoreProbeAgent.MAX_INCOMING_FADE))
+		{
+			throw new IllegalArgumentException("incoming fade out of range");
+		}
+		configuredIncomingFade = incomingFade == null ? -1 : incomingFade;
 		enabled = true;
 		status("ARMED", "version=1.12.39 targets=4 mode="
-			+ (enableAreaFadeTest ? "AREA_INCOMING_FADE_TEST" : "OBSERVE_ONLY"));
+			+ (incomingFade == null ? "OBSERVE_ONLY" : "AREA_INCOMING_FADE_TEST configuredIncomingFade=" + incomingFade));
 	}
 
 	static synchronized void disable(String reason)
@@ -134,7 +138,7 @@ public final class CoreProbeLog
 	}
 
 	/**
-	 * Experiment 4's only behavior-changing decision. This method is injected
+	 * The tuning harness's only behavior-changing decision. This method is injected
 	 * only into the opt-in transformer variant. It fails closed: unless the
 	 * probe is armed, its mode is enabled, the ordinary route is in use, and
 	 * every timing exactly matches the observed area signature, the original
@@ -144,7 +148,8 @@ public final class CoreProbeLog
 	public static int effectiveIncomingFade(int outgoingDelay, int outgoingFade,
 		int incomingDelay, int incomingFade, boolean specialRoute)
 	{
-		if (!enabled || !areaFadeTest || specialRoute
+		int testFade = configuredIncomingFade;
+		if (!enabled || testFade < 1 || specialRoute
 			|| outgoingDelay != 0 || outgoingFade != 60
 			|| incomingDelay != 60 || incomingFade != 0)
 		{
@@ -157,10 +162,10 @@ public final class CoreProbeLog
 			write(header(monoNanos)
 				+ " method=ij.af override=AREA_INCOMING_FADE"
 				+ " originalTimings=[0,60,60,0]"
-				+ " effectiveTimings=[0,60,60,60]"
+				+ " effectiveTimings=[0,60,60," + testFade + "]"
 				+ " specialRoute=false caller=" + caller
 				+ " callerCategory=" + category(caller));
-			return 60;
+			return testFade;
 		}
 		catch (Throwable ignored)
 		{

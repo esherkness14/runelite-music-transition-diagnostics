@@ -488,8 +488,75 @@ not write volume, varps, scripts, track selection, or any other client state.
 
 ### Runtime results
 
-**Not live-tested in this implementation pass, by request.** Automated tests
-exercise the behavior on synthetic methods only; a real-client smoke test loads
-and verifies transformed classes but never invokes their game methods. Record
-the eventual audible result and probe ordering here without promoting the
-signature to a general architecture.
+The user's live Experiment 4 test intercepted multiple real area transitions.
+Each accepted `ij.af` call had original timings `0,60,60,0`, and the opt-in
+override changed only incoming fade, yielding `0,60,60,60`. This was observed
+in both directions at the Draynor Manor boundary and at additional tested
+music boundaries involving archive IDs 127, 151, and 107.
+
+The user reported that a fade-in was probably audible but subtle. Track
+composition materially affects perception: naturally quiet introductions can
+hide the effect, while immediate, strong introductions make abrupt starts more
+apparent. This is a subjective report, not a measured fade curve.
+
+Archive 151 was requested during natural progression with timings `0,0,0,0`
+in Experiment 3, but during an area-triggered transition it appeared with
+`0,60,60,0` here. The timing tuple therefore depends on request context; it
+is not simply a fixed property of the requested archive. The tested tuple is
+still an experimental match, not a general area-detection rule.
+
+Whether login or startup music uses a fade remains a future question. It was
+not investigated in this experiment.
+
+## Experiment 5: configurable area incoming-fade tuning (2026-09-22)
+
+### Motivation and hypothesis
+
+The 60-step incoming fade was subjectively subtle in Experiment 4. This
+development-only harness tests 120 steps by default as a stronger native fade,
+with a bounded command-line value for comparisons (for example 60 or 90).
+The previous 60-step outgoing transition corresponded observationally to
+roughly 1.2–1.3 seconds before the old active MIDI request disappeared. Native
+music timings are scheduler steps, not milliseconds; that observation is not a
+general conversion factor or a prediction of audible incoming-fade length.
+
+### Implementation and limits
+
+- `.\gradlew.bat run` attaches the observation-only agent, with no argument
+  local write and no reading of `areaIncomingFade`.
+- `.\gradlew.bat runAreaFadeTest` uses 120 steps by default.
+  `-PareaIncomingFade=<value>` selects a value from 1 through 300 inclusive.
+  Gradle rejects malformed, negative, zero, and larger values before launching
+  the client. The Java agent independently validates its mode and value before
+  arming; unexpected arguments disable the probe.
+- The opt-in bytecode still matches only `specialRoute=false` and the original
+  tuple `0,60,60,0`. It preserves outgoing delay 0, outgoing fade 60, and
+  incoming delay 60, replacing only incoming fade. An `ARMED` line reports
+  `configuredIncomingFade=<value>`. Every accepted override records
+  `originalTimings=[0,60,60,0]` and
+  `effectiveTimings=[0,60,60,<value>]`.
+- The exact 1.12.39 injected-client hash, signatures, resource uniqueness,
+  loader, provenance, and original-byte checks remain unchanged. The harness
+  does not alter natural tuples, jingles, volume, track selection, or other
+  client state. No startup/login-specific handling was added. Whether a startup
+  request could ever present the same eligible tuple remains unknown; this
+  experiment makes no claim about that path. The timing signature remains an
+  experimental match, not a general area-detection design.
+
+### Automated verification
+
+- `.\gradlew.bat build` passed. The verified 1.12.39 client classes loaded
+  under both observation and 120-step test agents with `-Xverify:all`; no game
+  music method was invoked by smoke tests.
+- Synthetic `ij.af` tests passed for configured 60, 90, and 120 steps. They
+  verified the unchanged first three arguments, original method execution,
+  `ARMED` value, and original/effective audit fields. Natural, special-route,
+  and unrelated timing calls kept their original incoming fade.
+- Agent parsing rejected malformed, negative, zero, and over-300 values.
+  A real Gradle invocation with `-PareaIncomingFade=abc` failed at
+  `runAreaFadeTest` before JavaExec launched the development client.
+
+### Runtime results
+
+Not live-tested in this implementation pass. Login/startup fading remains a
+future question and was not investigated.

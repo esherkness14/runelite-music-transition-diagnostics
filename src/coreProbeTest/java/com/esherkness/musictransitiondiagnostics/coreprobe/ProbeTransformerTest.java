@@ -96,7 +96,7 @@ public class ProbeTransformerTest
 	public void normalRunRemainsObservationOnlyForAreaSignature() throws Exception
 	{
 		CoreProbeLog.initialize(temporary.newFile("observe-only.log").toPath());
-		CoreProbeLog.arm(false);
+		CoreProbeLog.arm(null);
 		Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), false));
 		invokeIj(target, 0, 60, 60, 0, false);
 		assertEquals(0, target.getField("seen1").getInt(null));
@@ -107,31 +107,35 @@ public class ProbeTransformerTest
 	}
 
 	@Test
-	public void exactAreaSignatureChangesOnlyIncomingFadeAndRunsOriginal() throws Exception
+	public void configuredAreaFadeChangesOnlyIncomingFadeAndRunsOriginal() throws Exception
 	{
-		Path log = temporary.newFile("override.log").toPath();
-		CoreProbeLog.initialize(log);
-		CoreProbeLog.arm(true);
-		Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), true));
-		ArrayList<Integer> requests = invokeIj(target, 0, 60, 60, 0, false);
-		assertSame(requests, target.getField("seen0").get(null));
-		assertEquals(0, target.getField("seen1").getInt(null));
-		assertEquals(60, target.getField("seen2").getInt(null));
-		assertEquals(60, target.getField("seen3").getInt(null));
-		assertEquals(60, target.getField("seen4").getInt(null));
-		assertFalse(target.getField("seen5").getBoolean(null));
-		assertEquals(77, target.getField("seen6").getInt(null));
-		assertEquals(1, target.getField("executions").getInt(null));
-		String text = Files.readString(log);
-		assertTrue(text.contains("originalTimings=[0,60,60,0]"));
-		assertTrue(text.contains("effectiveTimings=[0,60,60,60]"));
+		for (int configured : new int[]{60, 90, 120})
+		{
+			Path log = temporary.newFile("override-" + configured + ".log").toPath();
+			CoreProbeLog.initialize(log);
+			CoreProbeLog.arm(configured);
+			Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), true));
+			ArrayList<Integer> requests = invokeIj(target, 0, 60, 60, 0, false);
+			assertSame(requests, target.getField("seen0").get(null));
+			assertEquals(0, target.getField("seen1").getInt(null));
+			assertEquals(60, target.getField("seen2").getInt(null));
+			assertEquals(60, target.getField("seen3").getInt(null));
+			assertEquals(configured, target.getField("seen4").getInt(null));
+			assertFalse(target.getField("seen5").getBoolean(null));
+			assertEquals(77, target.getField("seen6").getInt(null));
+			assertEquals(1, target.getField("executions").getInt(null));
+			String text = Files.readString(log);
+			assertTrue(text.contains("state=ARMED version=1.12.39 targets=4 mode=AREA_INCOMING_FADE_TEST configuredIncomingFade=" + configured));
+			assertTrue(text.contains("originalTimings=[0,60,60,0]"));
+			assertTrue(text.contains("effectiveTimings=[0,60,60," + configured + "]"));
+		}
 	}
 
 	@Test
 	public void naturalSignaturesRemainUntouchedInAreaFadeMode() throws Exception
 	{
 		CoreProbeLog.initialize(temporary.newFile("natural.log").toPath());
-		CoreProbeLog.arm(true);
+		CoreProbeLog.arm(120);
 		assertIjIncomingFade(0, 20, 0, 0, false, 0);
 		assertIjIncomingFade(0, 0, 0, 0, false, 0);
 	}
@@ -140,12 +144,31 @@ public class ProbeTransformerTest
 	public void specialRouteAndUnrelatedTimingsRemainUntouched() throws Exception
 	{
 		CoreProbeLog.initialize(temporary.newFile("nonmatches.log").toPath());
-		CoreProbeLog.arm(true);
+		CoreProbeLog.arm(120);
 		assertIjIncomingFade(0, 60, 60, 0, true, 0);
 		assertIjIncomingFade(1, 60, 60, 0, false, 0);
 		assertIjIncomingFade(0, 59, 60, 0, false, 0);
 		assertIjIncomingFade(0, 60, 59, 0, false, 0);
 		assertIjIncomingFade(0, 60, 60, 1, false, 1);
+	}
+
+	@Test
+	public void agentModeRejectsMalformedAndOutOfRangeFadeValues()
+	{
+		assertNull(CoreProbeAgent.parseIncomingFade(null));
+		assertNull(CoreProbeAgent.parseIncomingFade(""));
+		for (int value : new int[]{60, 90, 120, 300})
+		{
+			assertEquals(Integer.valueOf(value), CoreProbeAgent.parseIncomingFade("area-incoming-fade-test:" + value));
+		}
+		for (String invalid : new String[]{"area-incoming-fade-test", "area-incoming-fade-test:",
+			"area-incoming-fade-test:-1", "area-incoming-fade-test:0",
+			"area-incoming-fade-test:301", "area-incoming-fade-test:999999999999",
+			"area-incoming-fade-test:90.5", "area-incoming-fade-test: 90",
+			"area-incoming-fade-test:090", "unknown:120"})
+		{
+			assertThrows(invalid, IllegalArgumentException.class, () -> CoreProbeAgent.parseIncomingFade(invalid));
+		}
 	}
 
 	@Test
