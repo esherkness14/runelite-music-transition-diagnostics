@@ -633,6 +633,70 @@ verified client jar: `nu.az` is transformed only in opt-in mode and reported
 
 ### Runtime results
 
-Not live-tested in this implementation pass. The five questions above remain
-open until a user-run transition produces stream-volume lines. Login/startup
-fading remains a separate future question.
+The user reports that the Experiment 6 native setter trace showed the incoming
+fade working correctly: requested stream volume rose gradually through
+intermediate values. The perceived abrupt entrance is therefore not explained
+by an abrupt native setter jump in this test. The user identified the current
+effective tuple `[0,60,60,120]` as making the transition feel sequential:
+the new track waits 60 scheduler steps before its start/fade-in branch.
+No exact write count or raw trace was supplied here, so these notes do not
+invent one or infer PCM loudness from setter values.
+
+The intended behavior is now an overlapping crossfade: start the outgoing
+fade immediately, start the incoming track at volume zero without the prior
+60-step delay, and let both native fades overlap. Preserve the subjectively
+good 60-step outgoing fade. Login/startup fading remains a separate future
+question.
+
+## Experiment 7: overlapping native area crossfade (2026-09-22)
+
+### Motivation and intended test
+
+Experiment 6 showed that the native incoming setter ramps through intermediate
+volumes. The subjectively sequential Experiment 5 transition used effective
+timings `[0,60,60,120]`: the 60-step incoming delay deferred the new track's
+start/fade task. The intended product behavior is a crossfade: old music begins
+fading immediately, new music starts at zero without that delay, and the fades
+overlap. The existing outgoing 60-step fade sounded good and is retained.
+This is the rationale for a test, not a claim that live audio overlap has already
+been demonstrated. Stream loading or other task scheduling could still affect
+the audible timing.
+
+### Implemented intervention and safeguards
+
+- Normal `run` remains observation-only. Only `runAreaFadeTest` can change
+  arguments at the verified `ij.af` entry, and only when `specialRoute=false`
+  and the *original* complete tuple is exactly `[0,60,60,0]`.
+- Outgoing delay and fade remain `0,60`. The command-line
+  `-PareaIncomingDelay=<integer>` accepts 0–60 scheduler steps and defaults to
+  0. `-PareaIncomingFade=<integer>` retains its 1–300 range and 120 default.
+  The default effective tuple is `[0,60,0,120]`; for example delay 30 and fade
+  90 give `[0,60,30,90]`. These units are native steps, not milliseconds.
+- Each accepted override logs both `originalTimings=[0,60,60,0]` and the
+  effective tuple. The `ARMED` line reports both configured values. Malformed or
+  out-of-range project properties fail before the dev client starts; the agent
+  also independently validates its arguments and fails closed.
+- The bounded, synchronous `nu.az(II)V` volume trace is disabled by default,
+  even in `runAreaFadeTest`. Explicit `-PprobeStreamVolume=true` enables it for
+  a separate measurement run. Without that flag, the verified `nu` bytes pass
+  through unchanged. This avoids high-volume logging overhead during subjective
+  listening comparisons.
+- The exact 1.12.39 injected-client hash, method signatures, loader,
+  provenance, resource-uniqueness, original-byte, and not-already-loaded checks
+  remain in force. Natural signatures, special/jingle routes, and unrelated
+  timing combinations pass through unchanged. There is no change to fade
+  curves, global volume, track selection, or login/startup behavior.
+
+This exact timing match remains an experimental filter, not a final general
+area-detection architecture. Whether login/startup fading needs treatment is
+still a future question, not investigated here.
+
+### Automated verification and status
+
+`.\gradlew.bat build` passed, including synthetic method-execution tests,
+normal observation-mode pass-through, default `[0,60,0,120]`, custom delay/fade
+values, invalid argument parsing, natural/special/unrelated pass-through,
+default-disabled setter tracing, and `-Xverify:all` agent smoke processes with
+the setter probe both off and on. The tests do not invoke real game music
+methods or establish subjective audibility. No live RuneScape test was
+performed for Experiment 7.

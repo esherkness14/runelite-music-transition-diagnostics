@@ -18,6 +18,7 @@ public final class CoreProbeAgent
 {
 	static final String AREA_FADE_TEST_MODE = "area-incoming-fade-test";
 	static final int MAX_INCOMING_FADE = 300;
+	static final int MAX_INCOMING_DELAY = 60;
 	static final String EXPECTED_SHA256 =
 		"25f42961c400bd9dfff1554402441c0ba6d1cffd011163cb9b0b4c42ae194f85";
 
@@ -30,14 +31,14 @@ public final class CoreProbeAgent
 			CoreProbeLog.initialize(Path.of(System.getProperty("musicCoreProbe.log",
 				"build/music-core-probe.log")));
 			Runtime.getRuntime().addShutdownHook(new Thread(CoreProbeLog::close, "music-core-probe-close"));
-			final Integer incomingFade;
+			final AreaFadeSettings settings;
 			try
 			{
-				incomingFade = parseIncomingFade(agentArguments);
+				settings = parseSettings(agentArguments);
 			}
 			catch (IllegalArgumentException rejected)
 			{
-				CoreProbeLog.disable("invalid-agent-mode-or-incoming-fade");
+				CoreProbeLog.disable("invalid-agent-mode-or-area-fade-settings");
 				return;
 			}
 			ClassLoader loader = ClassLoader.getSystemClassLoader();
@@ -83,9 +84,10 @@ public final class CoreProbeAgent
 					return;
 				}
 			}
-			ProbeTransformer transformer = new ProbeTransformer(jar, loader, originals, incomingFade != null);
+			ProbeTransformer transformer = new ProbeTransformer(jar, loader, originals,
+				settings != null, settings != null && settings.probeStreamVolume);
 			instrumentation.addTransformer(transformer, false);
-			CoreProbeLog.arm(incomingFade);
+			CoreProbeLog.arm(settings);
 		}
 		catch (Throwable ignored)
 		{
@@ -96,28 +98,54 @@ public final class CoreProbeAgent
 	}
 
 	/** Null means the ordinary observation-only launcher. */
-	static Integer parseIncomingFade(String agentArguments)
+	static AreaFadeSettings parseSettings(String agentArguments)
 	{
 		if (agentArguments == null || agentArguments.isEmpty())
 		{
 			return null;
 		}
-		String prefix = AREA_FADE_TEST_MODE + ":";
-		if (!agentArguments.startsWith(prefix))
+		String[] parts = agentArguments.split(":", -1);
+		if (parts.length != 4 || !AREA_FADE_TEST_MODE.equals(parts[0]))
 		{
 			throw new IllegalArgumentException("unsupported agent mode");
 		}
-		String raw = agentArguments.substring(prefix.length());
-		if (!raw.matches("[1-9][0-9]{0,2}"))
+		if (!parts[1].matches("[1-9][0-9]{0,2}"))
 		{
 			throw new IllegalArgumentException("invalid incoming fade syntax");
 		}
-		int value = Integer.parseInt(raw);
-		if (value > MAX_INCOMING_FADE)
+		int fade = Integer.parseInt(parts[1]);
+		if (fade > MAX_INCOMING_FADE)
 		{
 			throw new IllegalArgumentException("incoming fade exceeds maximum");
 		}
-		return value;
+		if (!parts[2].matches("0|[1-9][0-9]?"))
+		{
+			throw new IllegalArgumentException("invalid incoming delay syntax");
+		}
+		int delay = Integer.parseInt(parts[2]);
+		if (delay > MAX_INCOMING_DELAY)
+		{
+			throw new IllegalArgumentException("incoming delay exceeds maximum");
+		}
+		if (!parts[3].equals("true") && !parts[3].equals("false"))
+		{
+			throw new IllegalArgumentException("invalid stream-volume probe flag");
+		}
+		return new AreaFadeSettings(fade, delay, Boolean.parseBoolean(parts[3]));
+	}
+
+	static final class AreaFadeSettings
+	{
+		final int incomingFade;
+		final int incomingDelay;
+		final boolean probeStreamVolume;
+
+		AreaFadeSettings(int incomingFade, int incomingDelay, boolean probeStreamVolume)
+		{
+			this.incomingFade = incomingFade;
+			this.incomingDelay = incomingDelay;
+			this.probeStreamVolume = probeStreamVolume;
+		}
 	}
 
 	static String sha256(byte[] bytes) throws Exception

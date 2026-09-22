@@ -105,11 +105,19 @@ def attachCoreProbe = { JavaExec task, String logName, Closure<String> agentMode
 tasks.named('run', JavaExec) { attachCoreProbe(it, 'music-core-probe.log', null) }
 tasks.named('runAreaFadeTest', JavaExec) {
 	attachCoreProbe(it, 'music-core-probe.log', {
-		def raw = providers.gradleProperty('areaIncomingFade').orElse('120').get()
-		if (!(raw ==~ /[1-9][0-9]*/) || raw.length() > 3 || Integer.parseInt(raw) > 300) {
+		def fade = providers.gradleProperty('areaIncomingFade').orElse('120').get()
+		def delay = providers.gradleProperty('areaIncomingDelay').orElse('0').get()
+		def volumeProbe = providers.gradleProperty('probeStreamVolume').orElse('false').get()
+		if (!(fade ==~ /[1-9][0-9]*/) || fade.length() > 3 || Integer.parseInt(fade) > 300) {
 			throw new GradleException('areaIncomingFade must be an integer from 1 to 300 native scheduler steps')
 		}
-		return 'area-incoming-fade-test:' + raw
+		if (!(delay ==~ /(0|[1-9][0-9]?)/) || Integer.parseInt(delay) > 60) {
+			throw new GradleException('areaIncomingDelay must be an integer from 0 to 60 native scheduler steps')
+		}
+		if (volumeProbe != 'true' && volumeProbe != 'false') {
+			throw new GradleException('probeStreamVolume must be exactly true or false')
+		}
+		return 'area-incoming-fade-test:' + fade + ':' + delay + ':' + volumeProbe
 	})
 }
 
@@ -137,7 +145,15 @@ tasks.register('coreProbeAreaFadeSmokeTest', JavaExec) {
 	classpath = sourceSets.coreProbeTest.runtimeClasspath + configurations.testRuntimeClasspath
 	mainClass = 'com.esherkness.musictransitiondiagnostics.coreprobe.ProbeSmokeMain'
 	jvmArgs '-Xverify:all'
-	attachCoreProbe(it, 'test-results/core-probe-area-fade-smoke.log', { 'area-incoming-fade-test:120' })
+	attachCoreProbe(it, 'test-results/core-probe-area-fade-smoke.log', { 'area-incoming-fade-test:120:0:false' })
+}
+
+tasks.register('coreProbeVolumeSmokeTest', JavaExec) {
+	dependsOn tasks.named('coreProbeTestClasses')
+	classpath = sourceSets.coreProbeTest.runtimeClasspath + configurations.testRuntimeClasspath
+	mainClass = 'com.esherkness.musictransitiondiagnostics.coreprobe.ProbeSmokeMain'
+	jvmArgs '-Xverify:all'
+	attachCoreProbe(it, 'test-results/core-probe-volume-smoke.log', { 'area-incoming-fade-test:120:0:true' })
 }
 
 tasks.register('coreProbeClosedSmokeTest', JavaExec) {
@@ -152,7 +168,8 @@ tasks.register('coreProbeClosedSmokeTest', JavaExec) {
 tasks.named('assemble') { dependsOn coreProbeJar }
 tasks.named('check') {
 	dependsOn tasks.named('coreProbeTest'), tasks.named('coreProbeSmokeTest'),
-		tasks.named('coreProbeAreaFadeSmokeTest'), tasks.named('coreProbeClosedSmokeTest')
+		tasks.named('coreProbeAreaFadeSmokeTest'), tasks.named('coreProbeVolumeSmokeTest'),
+		tasks.named('coreProbeClosedSmokeTest')
 }
 
 tasks.register('shadowJar', Jar) {

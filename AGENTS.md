@@ -3,9 +3,10 @@
 ## Project goal
 
 This repository is a temporary reverse-engineering spike toward making OSRS
-music transitions smoothly fade out, pause briefly, and fade in. The eventual
-behavior should ideally cover both area-triggered music changes and natural
-end-of-track progression.
+music transitions smooth. The current desired behavior is an overlapping
+crossfade: fade the old track out immediately while starting the new track at
+zero volume without a deliberate delay, then fade it in. The eventual behavior
+should ideally cover both area-triggered changes and natural progression.
 
 Except for an explicitly authorized, opt-in experiment, diagnostics must remain
 read-only: do not change playback, volume, varps, varclients, scripts, or other
@@ -61,24 +62,28 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   returns, exceptions, and music state; no fade control or intentional delays.
   Keep the agent outside main/plugin artifacts and reject unknown client hashes
   or signatures. See `RESEARCH-NOTES.md` for the exact pinned artifact.
-- Experiment 4 established the opt-in `runAreaFadeTest` exception. Experiment 5
+- Experiment 4 established the opt-in `runAreaFadeTest` exception. Experiment 7
   permits a configurable replacement `incomingFade` of 1–300 native scheduler
-  steps (default 120), but only when `specialRoute == false` and the complete
-  original `ij.af` timing tuple is exactly `0,60,60,0`. Preserve the first
-  three timings. Ordinary `run` remains observation-only. This signature is a
-  controlled experiment, not the final area-detection architecture. Preserve
-  the version/hash/signature gates and never alter the natural `0,20,0,0` or
-  `0,0,0,0` signatures.
+  steps (default 120) and `incomingDelay` of 0–60 (default 0), but only when
+  `specialRoute == false` and the complete original `ij.af` tuple is exactly
+  `0,60,60,0`. Preserve outgoing delay 0 and outgoing fade 60. Ordinary `run`
+  remains observation-only. This signature is a controlled experiment, not the
+  final area-detection architecture. Preserve the version/hash/signature gates
+  and never alter the natural `0,20,0,0` or `0,0,0,0` signatures.
 - Experiment 4 live tests found a probably audible but subtle 60-step incoming
   fade. Archive 151 appeared with `0,0,0,0` in natural progression and
   `0,60,60,0` at an area boundary: timings depend on request context. Leave
   login/startup fading as a future question; do not investigate it yet.
 - Experiment 5 live tests confirmed 120-step incoming-fade overrides. The user
   heard a gradual overall transition but not a clearly continuous incoming
-  ramp. Experiment 6 observes the verified `nu.az(II)V` stream-volume setter
-  for a bounded window after an accepted override. Treat setter calls as
-  measurements, not proof of perceived loudness. Preserve Experiment 5 timing
-  behavior and leave login/startup fading for later.
+  ramp. Experiment 6 confirmed that the verified `nu.az(II)V` stream-volume
+  setter does ramp gradually through intermediate values; the sequential feel
+  comes from the 60-step incoming delay in `[0,60,60,120]`. Experiment 7 tests
+  an overlapping crossfade with default effective tuple `[0,60,0,120]`.
+  High-volume setter logging is off by default, available only with explicit
+  `-PprobeStreamVolume=true` in the opt-in launcher. Treat setter calls as
+  measurements, not proof of perceived loudness. Leave login/startup fading
+  for later.
 - Preserve Java 11 compatibility and the official `runelite/example-plugin`
   Gradle structure. Use `./gradlew build` (or `.\gradlew.bat build` on Windows)
   after code changes.

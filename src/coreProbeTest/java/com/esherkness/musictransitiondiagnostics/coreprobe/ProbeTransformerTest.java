@@ -108,27 +108,30 @@ public class ProbeTransformerTest
 	}
 
 	@Test
-	public void configuredAreaFadeChangesOnlyIncomingFadeAndRunsOriginal() throws Exception
+	public void defaultAndCustomCrossfadeTimingsPreserveOutgoingValuesAndRunOriginal() throws Exception
 	{
-		for (int configured : new int[]{60, 90, 120})
+		for (int[] settings : new int[][]{{120, 0}, {90, 30}, {60, 60}})
 		{
-			Path log = temporary.newFile("override-" + configured + ".log").toPath();
+			int fade = settings[0];
+			int delay = settings[1];
+			Path log = temporary.newFile("override-" + fade + "-" + delay + ".log").toPath();
 			CoreProbeLog.initialize(log);
-			CoreProbeLog.arm(configured);
+			CoreProbeLog.arm(settings(fade, delay, false));
 			Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), true));
 			ArrayList<Integer> requests = invokeIj(target, 0, 60, 60, 0, false);
 			assertSame(requests, target.getField("seen0").get(null));
 			assertEquals(0, target.getField("seen1").getInt(null));
 			assertEquals(60, target.getField("seen2").getInt(null));
-			assertEquals(60, target.getField("seen3").getInt(null));
-			assertEquals(configured, target.getField("seen4").getInt(null));
+			assertEquals(delay, target.getField("seen3").getInt(null));
+			assertEquals(fade, target.getField("seen4").getInt(null));
 			assertFalse(target.getField("seen5").getBoolean(null));
 			assertEquals(77, target.getField("seen6").getInt(null));
 			assertEquals(1, target.getField("executions").getInt(null));
 			String text = Files.readString(log);
-			assertTrue(text.contains("state=ARMED version=1.12.39 targets=5 mode=AREA_INCOMING_FADE_TEST configuredIncomingFade=" + configured));
+			assertTrue(text.contains("state=ARMED version=1.12.39 targets=5 mode=AREA_INCOMING_FADE_TEST configuredIncomingFade=" + fade
+				+ " configuredIncomingDelay=" + delay + " probeStreamVolume=false"));
 			assertTrue(text.contains("originalTimings=[0,60,60,0]"));
-			assertTrue(text.contains("effectiveTimings=[0,60,60," + configured + "]"));
+			assertTrue(text.contains("effectiveTimings=[0,60," + delay + "," + fade + "]"));
 		}
 	}
 
@@ -136,7 +139,7 @@ public class ProbeTransformerTest
 	public void naturalSignaturesRemainUntouchedInAreaFadeMode() throws Exception
 	{
 		CoreProbeLog.initialize(temporary.newFile("natural.log").toPath());
-		CoreProbeLog.arm(120);
+		CoreProbeLog.arm(settings(120, 0, false));
 		assertIjIncomingFade(0, 20, 0, 0, false, 0);
 		assertIjIncomingFade(0, 0, 0, 0, false, 0);
 	}
@@ -145,7 +148,7 @@ public class ProbeTransformerTest
 	public void specialRouteAndUnrelatedTimingsRemainUntouched() throws Exception
 	{
 		CoreProbeLog.initialize(temporary.newFile("nonmatches.log").toPath());
-		CoreProbeLog.arm(120);
+		CoreProbeLog.arm(settings(120, 0, false));
 		assertIjIncomingFade(0, 60, 60, 0, true, 0);
 		assertIjIncomingFade(1, 60, 60, 0, false, 0);
 		assertIjIncomingFade(0, 59, 60, 0, false, 0);
@@ -154,22 +157,46 @@ public class ProbeTransformerTest
 	}
 
 	@Test
-	public void agentModeRejectsMalformedAndOutOfRangeFadeValues()
+	public void agentModeValidatesFadeDelayAndOptionalVolumeProbe()
 	{
-		assertNull(CoreProbeAgent.parseIncomingFade(null));
-		assertNull(CoreProbeAgent.parseIncomingFade(""));
-		for (int value : new int[]{60, 90, 120, 300})
+		assertNull(CoreProbeAgent.parseSettings(null));
+		assertNull(CoreProbeAgent.parseSettings(""));
+		for (int[] values : new int[][]{{60, 0}, {90, 30}, {120, 60}, {300, 0}})
 		{
-			assertEquals(Integer.valueOf(value), CoreProbeAgent.parseIncomingFade("area-incoming-fade-test:" + value));
+			CoreProbeAgent.AreaFadeSettings parsed = CoreProbeAgent.parseSettings(
+				"area-incoming-fade-test:" + values[0] + ":" + values[1] + ":true");
+			assertEquals(values[0], parsed.incomingFade);
+			assertEquals(values[1], parsed.incomingDelay);
+			assertTrue(parsed.probeStreamVolume);
 		}
 		for (String invalid : new String[]{"area-incoming-fade-test", "area-incoming-fade-test:",
-			"area-incoming-fade-test:-1", "area-incoming-fade-test:0",
-			"area-incoming-fade-test:301", "area-incoming-fade-test:999999999999",
-			"area-incoming-fade-test:90.5", "area-incoming-fade-test: 90",
-			"area-incoming-fade-test:090", "unknown:120"})
+			"area-incoming-fade-test:-1:0:false", "area-incoming-fade-test:0:0:false",
+			"area-incoming-fade-test:301:0:false", "area-incoming-fade-test:999999999999:0:false",
+			"area-incoming-fade-test:90.5:0:false", "area-incoming-fade-test: 90:0:false",
+			"area-incoming-fade-test:090:0:false", "area-incoming-fade-test:120:-1:false",
+			"area-incoming-fade-test:120:61:false", "area-incoming-fade-test:120:abc:false",
+			"area-incoming-fade-test:120:01:false", "area-incoming-fade-test:120:0:True",
+			"area-incoming-fade-test:120:0:1", "area-incoming-fade-test:120:0",
+			"unknown:120:0:false"})
 		{
-			assertThrows(invalid, IllegalArgumentException.class, () -> CoreProbeAgent.parseIncomingFade(invalid));
+			assertThrows(invalid, IllegalArgumentException.class, () -> CoreProbeAgent.parseSettings(invalid));
 		}
+	}
+
+	@Test
+	public void streamVolumeProbeIsDisabledByDefaultEvenAfterEligibleOverride() throws Exception
+	{
+		Path log = temporary.newFile("unprobed-listening.log").toPath();
+		CoreProbeLog.initialize(log);
+		CoreProbeLog.arm(settings(120, 0, false));
+		byte[] original = fixture("nu", false);
+		assertArrayEquals(original, ProbeTransformer.instrument("nu", original, true, false));
+		assertEquals(120L, CoreProbeLog.effectiveIncomingTimings(0, 60, 60, 0, false));
+		CoreProbeLog.streamVolumeWriteAt(new Object(), 80, System.nanoTime());
+		String text = Files.readString(log);
+		assertTrue(text.contains("effectiveTimings=[0,60,0,120]"));
+		assertFalse(text.contains("type=STREAM_VOLUME_WRITE"));
+		assertFalse(text.contains("volumeWindow="));
 	}
 
 	@Test
@@ -177,16 +204,16 @@ public class ProbeTransformerTest
 	{
 		Path log = temporary.newFile("volume-window.log").toPath();
 		CoreProbeLog.initialize(log);
-		CoreProbeLog.arm(120);
+		CoreProbeLog.arm(settings(120, 0, true));
 		byte[] original = fixture("nu", false);
-		assertArrayEquals(original, ProbeTransformer.instrument("nu", original, false));
-		Class<?> target = define("nu", ProbeTransformer.instrument("nu", original, true));
+		assertArrayEquals(original, ProbeTransformer.instrument("nu", original, true, false));
+		Class<?> target = define("nu", ProbeTransformer.instrument("nu", original, true, true));
 		Object stream = target.getConstructor().newInstance();
 		Method setter = target.getDeclaredMethod("az", int.class, int.class);
 
 		setter.invoke(stream, 40, 7); // No accepted area override yet.
 		assertEquals(0, Files.readString(log).lines().filter(l -> l.contains("type=STREAM_VOLUME_WRITE")).count());
-		assertEquals(120, CoreProbeLog.effectiveIncomingFade(0, 60, 60, 0, false));
+		assertEquals(120L, CoreProbeLog.effectiveIncomingTimings(0, 60, 60, 0, false));
 		for (int volume : new int[]{0, 1, 20, 120})
 		{
 			setter.invoke(stream, volume, 7);
@@ -211,9 +238,9 @@ public class ProbeTransformerTest
 	{
 		Path log = temporary.newFile("no-volume-window.log").toPath();
 		CoreProbeLog.initialize(log);
-		CoreProbeLog.arm(120);
-		assertEquals(0, CoreProbeLog.effectiveIncomingFade(0, 20, 0, 0, false));
-		Class<?> target = define("nu", ProbeTransformer.instrument("nu", fixture("nu", false), true));
+		CoreProbeLog.arm(settings(120, 0, true));
+		assertEquals(0L, CoreProbeLog.effectiveIncomingTimings(0, 20, 0, 0, false));
+		Class<?> target = define("nu", ProbeTransformer.instrument("nu", fixture("nu", false), true, true));
 		target.getDeclaredMethod("az", int.class, int.class)
 			.invoke(target.getConstructor().newInstance(), 80, 7);
 		assertFalse(Files.readString(log).contains("type=STREAM_VOLUME_WRITE"));
@@ -224,8 +251,8 @@ public class ProbeTransformerTest
 	{
 		Path log = temporary.newFile("volume-limit.log").toPath();
 		CoreProbeLog.initialize(log);
-		CoreProbeLog.arm(120);
-		CoreProbeLog.effectiveIncomingFade(0, 60, 60, 0, false);
+		CoreProbeLog.arm(settings(120, 0, true));
+		CoreProbeLog.effectiveIncomingTimings(0, 60, 60, 0, false);
 		Object stream = new Object();
 		long start = System.nanoTime();
 		for (int i = 0; i < 520; i++)
@@ -252,7 +279,7 @@ public class ProbeTransformerTest
 		assertThrows(IllegalArgumentException.class, () -> ProbeTransformer.instrument("ij", fixture("rj", false)));
 		Map<String, byte[]> original = new LinkedHashMap<>();
 		ProbeTransformer.TARGETS.keySet().forEach(n -> original.put(n, fixture(n, false)));
-		ProbeTransformer transformer = new ProbeTransformer(Path.of("not-the-client.jar"), getClass().getClassLoader(), original, false);
+		ProbeTransformer transformer = new ProbeTransformer(Path.of("not-the-client.jar"), getClass().getClassLoader(), original, false, false);
 		assertNull(transformer.transform(getClass().getClassLoader(), "rj", null, null, original.get("rj")));
 		assertNull(transformer.transform(getClass().getClassLoader(), "unrelated", null, null, new byte[0]));
 		byte[] wrongSignature = fixture("rj", false);
@@ -381,8 +408,14 @@ public class ProbeTransformerTest
 	{
 		Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), true));
 		invokeIj(target, outgoingDelay, outgoingFade, incomingDelay, incomingFade, specialRoute);
+		assertEquals(incomingDelay, target.getField("seen3").getInt(null));
 		assertEquals(expected, target.getField("seen4").getInt(null));
 		assertEquals(1, target.getField("executions").getInt(null));
+	}
+
+	private static CoreProbeAgent.AreaFadeSettings settings(int fade, int delay, boolean volumeProbe)
+	{
+		return new CoreProbeAgent.AreaFadeSettings(fade, delay, volumeProbe);
 	}
 
 	private static Class<?> define(String name, byte[] bytes)

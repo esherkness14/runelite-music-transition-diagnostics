@@ -26,7 +26,7 @@ final class ProbeTransformer implements ClassFileTransformer
 {
 	static final String LOGGER = CoreProbeLog.class.getName().replace('.', '/');
 	static final String LOG_DESCRIPTOR = "(Ljava/lang/String;Ljava/util/ArrayList;IIIII)V";
-	static final String FADE_DESCRIPTOR = "(IIIIZ)I";
+	static final String TIMINGS_DESCRIPTOR = "(IIIIZ)J";
 	static final String VOLUME_DESCRIPTOR = "(Ljava/lang/Object;I)V";
 	static final Map<String, String> TARGETS = new LinkedHashMap<>();
 	static
@@ -44,20 +44,22 @@ final class ProbeTransformer implements ClassFileTransformer
 	private final Map<String, byte[]> originals;
 	private final Map<String, byte[]> instrumented;
 	private final boolean areaFadeTest;
+	private final boolean probeStreamVolume;
 	private volatile boolean disabled;
 
 	ProbeTransformer(Path jar, ClassLoader loader, Map<String, byte[]> originals,
-		boolean areaFadeTest)
+		boolean areaFadeTest, boolean probeStreamVolume)
 	{
 		this.jar = jar;
 		this.expectedLoader = loader;
 		this.originals = originals;
 		this.areaFadeTest = areaFadeTest;
+		this.probeStreamVolume = probeStreamVolume;
 		this.instrumented = new LinkedHashMap<>();
 		// Validate/prepare ALL five methods before registering ANY transformation.
 		for (String owner : TARGETS.keySet())
 		{
-			instrumented.put(owner, instrument(owner, originals.get(owner), areaFadeTest));
+			instrumented.put(owner, instrument(owner, originals.get(owner), areaFadeTest, probeStreamVolume));
 		}
 	}
 
@@ -78,9 +80,9 @@ final class ProbeTransformer implements ClassFileTransformer
 			{
 				throw new IllegalStateException("unexpected class definition");
 			}
-			if (name.equals("nu") && !areaFadeTest)
+			if (name.equals("nu") && !probeStreamVolume)
 			{
-				// Ordinary run verifies nu but leaves its bytecode unchanged.
+				// Normal run and unprobed listening tests leave nu unchanged.
 				CoreProbeLog.status("VERIFIED_UNCHANGED", "method=nu.az(II)V");
 				return null;
 			}
@@ -98,10 +100,16 @@ final class ProbeTransformer implements ClassFileTransformer
 
 	static byte[] instrument(String owner, byte[] original)
 	{
-		return instrument(owner, original, false);
+		return instrument(owner, original, false, false);
 	}
 
 	static byte[] instrument(String owner, byte[] original, boolean areaFadeTest)
+	{
+		return instrument(owner, original, areaFadeTest, false);
+	}
+
+	static byte[] instrument(String owner, byte[] original, boolean areaFadeTest,
+		boolean probeStreamVolume)
 	{
 		if (original == null || !TARGETS.containsKey(owner))
 		{
@@ -131,7 +139,7 @@ final class ProbeTransformer implements ClassFileTransformer
 		{
 			throw new IllegalArgumentException("missing signature");
 		}
-		if (owner.equals("nu") && !areaFadeTest)
+		if (owner.equals("nu") && !probeStreamVolume)
 		{
 			return original.clone();
 		}
@@ -167,16 +175,23 @@ final class ProbeTransformer implements ClassFileTransformer
 		}
 		if (areaFadeTest && owner.equals("ij"))
 		{
-			// Only the explicit Experiment 4 variant writes an argument local.
-			// The helper returns the original value for every non-match/failure.
+			// One guarded decision produces both incoming timings. The packed long
+			// holds delay in its high int and fade in its low int; nonmatches return
+			// the original pair, and only this opt-in variant writes these locals.
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 1));
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 2));
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 3));
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 4));
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 5));
 			entry.add(new MethodInsnNode(Opcodes.INVOKESTATIC, LOGGER,
-				"effectiveIncomingFade", FADE_DESCRIPTOR, false));
+				"effectiveIncomingTimings", TIMINGS_DESCRIPTOR, false));
+			entry.add(new InsnNode(Opcodes.DUP2));
+			entry.add(new InsnNode(Opcodes.L2I));
 			entry.add(new VarInsnNode(Opcodes.ISTORE, 4));
+			entry.add(new LdcInsnNode(32));
+			entry.add(new InsnNode(Opcodes.LUSHR));
+			entry.add(new InsnNode(Opcodes.L2I));
+			entry.add(new VarInsnNode(Opcodes.ISTORE, 3));
 		}
 		entry.add(end);
 		entry.add(new JumpInsnNode(Opcodes.GOTO, resume));
@@ -188,8 +203,8 @@ final class ProbeTransformer implements ClassFileTransformer
 		// Even a linkage failure in diagnostics cannot skip the original method.
 		target.tryCatchBlocks.add(0, new TryCatchBlockNode(start, end, handler, "java/lang/Throwable"));
 		target.instructions.insert(entry);
-		// Entry leaves the original locals/stack unchanged. Preserve existing frames
-		// and recompute only stack maxima: never load obfuscated classes to merge types.
+		// Preserve existing frames and recompute only stack maxima: never load
+		// obfuscated classes to merge types.
 		ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
 		node.accept(writer);
 		return writer.toByteArray();

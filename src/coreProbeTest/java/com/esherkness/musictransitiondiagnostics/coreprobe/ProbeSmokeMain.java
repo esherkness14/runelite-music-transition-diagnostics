@@ -39,7 +39,7 @@ public final class ProbeSmokeMain
 				throw new AssertionError("Missing transformation: " + method);
 			}
 		}
-		String nuState = text.contains("mode=AREA_INCOMING_FADE_TEST")
+		String nuState = text.contains("probeStreamVolume=true")
 			? "state=TRANSFORMED method=nu.az(II)V"
 			: "state=VERIFIED_UNCHANGED method=nu.az(II)V";
 		if (!text.contains(nuState))
