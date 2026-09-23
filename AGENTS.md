@@ -62,14 +62,15 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   returns, exceptions, and music state; no fade control or intentional delays.
   Keep the agent outside main/plugin artifacts and reject unknown client hashes
   or signatures. See `RESEARCH-NOTES.md` for the exact pinned artifact.
-- Experiment 4 established the opt-in `runAreaFadeTest` exception. Experiment 7
-  permits a configurable replacement `incomingFade` of 1–300 native scheduler
-  steps (default 120) and `incomingDelay` of 0–60 (default 0), but only when
-  `specialRoute == false` and the complete original `ij.af` tuple is exactly
-  `0,60,60,0`. Preserve outgoing delay 0 and outgoing fade 60. Ordinary `run`
-  remains observation-only. This signature is a controlled experiment, not the
-  final area-detection architecture. Preserve the version/hash/signature gates
-  and never alter the natural `0,20,0,0` or `0,0,0,0` signatures.
+- Experiment 4 established the opt-in `runAreaFadeTest` exception. The current
+  Experiment 7 tuning harness permits all four effective timings to be set from
+  0–300 native scheduler steps (defaults `[0,60,0,120]`), but only when
+  `specialRoute == false` and the complete *original* `ij.af` tuple is exactly
+  `[0,60,60,0]`. Ordinary `run` remains observation-only. This signature is a
+  controlled experiment, not the final area-detection architecture. Preserve
+  the version/hash/signature gates and never alter the natural `0,20,0,0` or
+  `0,0,0,0` signatures. All four effective values must come from one guarded
+  decision; audit failure must leave all four original values in place.
 - Experiment 4 live tests found a probably audible but subtle 60-step incoming
   fade. Archive 151 appeared with `0,0,0,0` in natural progression and
   `0,60,60,0` at an area boundary: timings depend on request context. Leave

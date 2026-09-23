@@ -64,14 +64,14 @@ tasks.register('run', JavaExec) {
 }
 
 // Deliberately separate from run: only this opt-in launcher asks the verified
-// native probe to replace the exact observed area's incoming-fade argument.
+// native probe to tune the four timings of the exact observed area signature.
 tasks.register('runAreaFadeTest', JavaExec) {
 	classpath = sourceSets.test.runtimeClasspath
 	mainClass = pluginMainClass
 
 	jvmArgs "-ea"
 	args "--developer-mode", "--debug"
-	description = 'Run the dev client with the bounded Experiment 5 area incoming-fade test.'
+	description = 'Run the dev client with the bounded opt-in area timing test.'
 	group = 'application'
 }
 
@@ -105,19 +105,22 @@ def attachCoreProbe = { JavaExec task, String logName, Closure<String> agentMode
 tasks.named('run', JavaExec) { attachCoreProbe(it, 'music-core-probe.log', null) }
 tasks.named('runAreaFadeTest', JavaExec) {
 	attachCoreProbe(it, 'music-core-probe.log', {
-		def fade = providers.gradleProperty('areaIncomingFade').orElse('120').get()
-		def delay = providers.gradleProperty('areaIncomingDelay').orElse('0').get()
+		def timingProperties = [
+			areaOutgoingDelay: '0', areaOutgoingFade: '60',
+			areaIncomingDelay: '0', areaIncomingFade: '120'
+		]
+		def timings = timingProperties.collect { name, fallback ->
+			def value = providers.gradleProperty(name).orElse(fallback).get()
+			if (!(value ==~ /(0|[1-9][0-9]{0,2})/) || Integer.parseInt(value) > 300) {
+				throw new GradleException("${name} must be an integer from 0 to 300 native scheduler steps")
+			}
+			value
+		}
 		def volumeProbe = providers.gradleProperty('probeStreamVolume').orElse('false').get()
-		if (!(fade ==~ /[1-9][0-9]*/) || fade.length() > 3 || Integer.parseInt(fade) > 300) {
-			throw new GradleException('areaIncomingFade must be an integer from 1 to 300 native scheduler steps')
-		}
-		if (!(delay ==~ /(0|[1-9][0-9]?)/) || Integer.parseInt(delay) > 60) {
-			throw new GradleException('areaIncomingDelay must be an integer from 0 to 60 native scheduler steps')
-		}
 		if (volumeProbe != 'true' && volumeProbe != 'false') {
 			throw new GradleException('probeStreamVolume must be exactly true or false')
 		}
-		return 'area-incoming-fade-test:' + fade + ':' + delay + ':' + volumeProbe
+		return 'area-incoming-fade-test:' + timings.join(':') + ':' + volumeProbe
 	})
 }
 
@@ -145,7 +148,7 @@ tasks.register('coreProbeAreaFadeSmokeTest', JavaExec) {
 	classpath = sourceSets.coreProbeTest.runtimeClasspath + configurations.testRuntimeClasspath
 	mainClass = 'com.esherkness.musictransitiondiagnostics.coreprobe.ProbeSmokeMain'
 	jvmArgs '-Xverify:all'
-	attachCoreProbe(it, 'test-results/core-probe-area-fade-smoke.log', { 'area-incoming-fade-test:120:0:false' })
+	attachCoreProbe(it, 'test-results/core-probe-area-fade-smoke.log', { 'area-incoming-fade-test:0:60:0:120:false' })
 }
 
 tasks.register('coreProbeVolumeSmokeTest', JavaExec) {
@@ -153,7 +156,7 @@ tasks.register('coreProbeVolumeSmokeTest', JavaExec) {
 	classpath = sourceSets.coreProbeTest.runtimeClasspath + configurations.testRuntimeClasspath
 	mainClass = 'com.esherkness.musictransitiondiagnostics.coreprobe.ProbeSmokeMain'
 	jvmArgs '-Xverify:all'
-	attachCoreProbe(it, 'test-results/core-probe-volume-smoke.log', { 'area-incoming-fade-test:120:0:true' })
+	attachCoreProbe(it, 'test-results/core-probe-volume-smoke.log', { 'area-incoming-fade-test:0:60:0:120:true' })
 }
 
 tasks.register('coreProbeClosedSmokeTest', JavaExec) {

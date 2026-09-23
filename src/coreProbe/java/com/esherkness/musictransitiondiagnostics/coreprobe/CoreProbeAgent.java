@@ -17,8 +17,7 @@ import java.util.jar.JarFile;
 public final class CoreProbeAgent
 {
 	static final String AREA_FADE_TEST_MODE = "area-incoming-fade-test";
-	static final int MAX_INCOMING_FADE = 300;
-	static final int MAX_INCOMING_DELAY = 60;
+	static final int MAX_TIMING = 300;
 	static final String EXPECTED_SHA256 =
 		"25f42961c400bd9dfff1554402441c0ba6d1cffd011163cb9b0b4c42ae194f85";
 
@@ -105,45 +104,51 @@ public final class CoreProbeAgent
 			return null;
 		}
 		String[] parts = agentArguments.split(":", -1);
-		if (parts.length != 4 || !AREA_FADE_TEST_MODE.equals(parts[0]))
+		if (parts.length != 6 || !AREA_FADE_TEST_MODE.equals(parts[0]))
 		{
 			throw new IllegalArgumentException("unsupported agent mode");
 		}
-		if (!parts[1].matches("[1-9][0-9]{0,2}"))
-		{
-			throw new IllegalArgumentException("invalid incoming fade syntax");
-		}
-		int fade = Integer.parseInt(parts[1]);
-		if (fade > MAX_INCOMING_FADE)
-		{
-			throw new IllegalArgumentException("incoming fade exceeds maximum");
-		}
-		if (!parts[2].matches("0|[1-9][0-9]?"))
-		{
-			throw new IllegalArgumentException("invalid incoming delay syntax");
-		}
-		int delay = Integer.parseInt(parts[2]);
-		if (delay > MAX_INCOMING_DELAY)
-		{
-			throw new IllegalArgumentException("incoming delay exceeds maximum");
-		}
-		if (!parts[3].equals("true") && !parts[3].equals("false"))
+		int outgoingDelay = parseTiming(parts[1], "outgoing delay");
+		int outgoingFade = parseTiming(parts[2], "outgoing fade");
+		int incomingDelay = parseTiming(parts[3], "incoming delay");
+		int incomingFade = parseTiming(parts[4], "incoming fade");
+		if (!parts[5].equals("true") && !parts[5].equals("false"))
 		{
 			throw new IllegalArgumentException("invalid stream-volume probe flag");
 		}
-		return new AreaFadeSettings(fade, delay, Boolean.parseBoolean(parts[3]));
+		return new AreaFadeSettings(outgoingDelay, outgoingFade, incomingDelay,
+			incomingFade, Boolean.parseBoolean(parts[5]));
+	}
+
+	private static int parseTiming(String raw, String name)
+	{
+		if (!raw.matches("0|[1-9][0-9]{0,2}"))
+		{
+			throw new IllegalArgumentException("invalid " + name + " syntax");
+		}
+		int value = Integer.parseInt(raw);
+		if (value > MAX_TIMING)
+		{
+			throw new IllegalArgumentException(name + " exceeds maximum");
+		}
+		return value;
 	}
 
 	static final class AreaFadeSettings
 	{
-		final int incomingFade;
+		final int outgoingDelay;
+		final int outgoingFade;
 		final int incomingDelay;
+		final int incomingFade;
 		final boolean probeStreamVolume;
 
-		AreaFadeSettings(int incomingFade, int incomingDelay, boolean probeStreamVolume)
+		AreaFadeSettings(int outgoingDelay, int outgoingFade, int incomingDelay,
+			int incomingFade, boolean probeStreamVolume)
 		{
-			this.incomingFade = incomingFade;
+			this.outgoingDelay = outgoingDelay;
+			this.outgoingFade = outgoingFade;
 			this.incomingDelay = incomingDelay;
+			this.incomingFade = incomingFade;
 			this.probeStreamVolume = probeStreamVolume;
 		}
 	}

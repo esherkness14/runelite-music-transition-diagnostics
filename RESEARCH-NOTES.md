@@ -700,3 +700,41 @@ default-disabled setter tracing, and `-Xverify:all` agent smoke processes with
 the setter probe both off and on. The tests do not invoke real game music
 methods or establish subjective audibility. No live RuneScape test was
 performed for Experiment 7.
+
+### Experiment 7 follow-up: four-value tuning harness (2026-09-23)
+
+The user requested full native-tuple tuning for subjective crossfade comparisons.
+This extends the opt-in experiment; it is not new evidence that the original
+`[0,60,60,0]` timing signature is a universal area detector. Eligibility is
+still **only** `specialRoute=false` plus that exact *original* four-value
+tuple. Natural requests, jingles/special routes, and other tuples remain outside
+the override even when their values resemble a configured effective tuple.
+
+`runAreaFadeTest` now accepts `-PareaOutgoingDelay`, `-PareaOutgoingFade`,
+`-PareaIncomingDelay`, and `-PareaIncomingFade`, each an integer from 0 through
+300 native scheduler steps. Defaults remain `[0,60,0,120]`. For example,
+`-PareaOutgoingDelay=0 -PareaOutgoingFade=90 -PareaIncomingDelay=0
+-PareaIncomingFade=150` requests `[0,90,0,150]` for an eligible original
+`[0,60,60,0]`. Zero is deliberately allowed for every value, including fades;
+the verified fade tasks treat zero duration as a full-volume step. These are
+native scheduler steps, not milliseconds.
+
+One injected `ij.af` entry callback decides eligibility and returns an entire
+four-integer tuple. It returns the unmodified original tuple for any nonmatch
+or audit failure. Only the opt-in transformer writes the four argument locals.
+The `ARMED` line reports all four configured values and the override audit
+records both `originalTimings` and `effectiveTimings`. The 1.12.39 hash,
+signature, classloader, provenance, original-byte, and load-time safeguards are
+unchanged. `probeStreamVolume=false` remains the default; explicit
+`-PprobeStreamVolume=true` retains the bounded setter trace. Ordinary `run`
+remains observation-only. No track selection, global volume, fade-curve,
+natural-transition, jingle, or login/startup behavior was changed.
+
+Synthetic tests cover default/custom/nonzero-delay/zero/max tuples, invalid
+values in each field, exact-match and nonmatch behavior, normal observation
+mode, disabled-by-default stream tracing, audit-I/O failure returning all four
+originals, and original-body execution. Gradle was also checked to reject
+malformed, negative, and over-300 project properties before JavaExec launch. The
+verified-client smoke tests load the transformed methods with `-Xverify:all`
+without invoking game music methods. A live RuneScape test was not performed
+in this implementation pass.

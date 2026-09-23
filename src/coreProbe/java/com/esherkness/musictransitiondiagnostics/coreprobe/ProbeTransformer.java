@@ -26,7 +26,7 @@ final class ProbeTransformer implements ClassFileTransformer
 {
 	static final String LOGGER = CoreProbeLog.class.getName().replace('.', '/');
 	static final String LOG_DESCRIPTOR = "(Ljava/lang/String;Ljava/util/ArrayList;IIIII)V";
-	static final String TIMINGS_DESCRIPTOR = "(IIIIZ)J";
+	static final String TIMINGS_DESCRIPTOR = "(IIIIZ)[I";
 	static final String VOLUME_DESCRIPTOR = "(Ljava/lang/Object;I)V";
 	static final Map<String, String> TARGETS = new LinkedHashMap<>();
 	static
@@ -175,23 +175,26 @@ final class ProbeTransformer implements ClassFileTransformer
 		}
 		if (areaFadeTest && owner.equals("ij"))
 		{
-			// One guarded decision produces both incoming timings. The packed long
-			// holds delay in its high int and fade in its low int; nonmatches return
-			// the original pair, and only this opt-in variant writes these locals.
+			// One guarded decision produces a four-int array. Nonmatches and audit
+			// failures return the four originals. The fixed-size array is unpacked
+			// only in this opt-in variant, leaving ordinary run observation-only.
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 1));
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 2));
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 3));
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 4));
 			entry.add(new VarInsnNode(Opcodes.ILOAD, 5));
 			entry.add(new MethodInsnNode(Opcodes.INVOKESTATIC, LOGGER,
-				"effectiveIncomingTimings", TIMINGS_DESCRIPTOR, false));
-			entry.add(new InsnNode(Opcodes.DUP2));
-			entry.add(new InsnNode(Opcodes.L2I));
-			entry.add(new VarInsnNode(Opcodes.ISTORE, 4));
-			entry.add(new LdcInsnNode(32));
-			entry.add(new InsnNode(Opcodes.LUSHR));
-			entry.add(new InsnNode(Opcodes.L2I));
-			entry.add(new VarInsnNode(Opcodes.ISTORE, 3));
+				"effectiveTimings", TIMINGS_DESCRIPTOR, false));
+			for (int local = 4; local >= 1; local--)
+			{
+				if (local > 1)
+				{
+					entry.add(new InsnNode(Opcodes.DUP));
+				}
+				entry.add(new InsnNode(Opcodes.ICONST_0 + local - 1));
+				entry.add(new InsnNode(Opcodes.IALOAD));
+				entry.add(new VarInsnNode(Opcodes.ISTORE, local));
+			}
 		}
 		entry.add(end);
 		entry.add(new JumpInsnNode(Opcodes.GOTO, resume));

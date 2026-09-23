@@ -9,8 +9,8 @@ Neither mode directly writes global volume/varps, selects tracks, runs scripts,
 or contains a geographic music map. The opt-in native fade timing naturally
 affects per-stream volume through the game's own machinery. Normal `run` changes
 in-memory bytecode only enough to emit diagnostics; original arguments, method
-bodies, returns, and exceptions
-remain intact. `runAreaFadeTest` is the sole exception described below. Research
+bodies, returns, and exceptions remain intact. `runAreaFadeTest` is the sole
+exception described below. Research
 findings live in [RESEARCH-NOTES.md](RESEARCH-NOTES.md).
 
 ## Run Experiment 3
@@ -53,31 +53,34 @@ Archive 147's content/role is unknown and is not labeled as silence.
 
 ```powershell
 .\gradlew.bat runAreaFadeTest
-.\gradlew.bat runAreaFadeTest -PareaIncomingDelay=30 -PareaIncomingFade=90
+.\gradlew.bat runAreaFadeTest -PareaOutgoingDelay=0 -PareaOutgoingFade=90 -PareaIncomingDelay=0 -PareaIncomingFade=150
 .\gradlew.bat runAreaFadeTest -PprobeStreamVolume=true
 ```
 
 On macOS/Linux use `./gradlew runAreaFadeTest`. This is not the normal launcher.
-The defaults are `areaIncomingDelay=0` and `areaIncomingFade=120` native
-scheduler steps. The delay accepts integers from 0 through 60; the fade accepts
-integers from 1 through 300. Malformed or out-of-range values fail before the
-client launches. These values are scheduler steps, not milliseconds. Stream-
-volume tracing is off by default; `-PprobeStreamVolume=true` enables it for a
-separate measurement run. Only the exact values `true` and `false` are accepted.
+The four defaults are `areaOutgoingDelay=0`, `areaOutgoingFade=60`,
+`areaIncomingDelay=0`, and `areaIncomingFade=120`. Each accepts an integer from
+0 through 300 native scheduler steps; zero is valid for all four. Malformed or
+out-of-range values fail before the client launches. These are scheduler steps,
+not milliseconds. Stream-volume tracing is off by default;
+`-PprobeStreamVolume=true` enables it for a separate measurement run. Only the
+exact flag values `true` and `false` are accepted.
 
 The harness retains all Experiment 3 logging and changes `ij.af` only when:
 
 - `specialRoute == false`, and
 - the complete original tuple is exactly `0,60,60,0`.
 
-For that exact match only, the effective tuple becomes
-`[0,60,<configured delay>,<configured fade>]`; the default is `[0,60,0,120]`.
-Outgoing delay 0 and outgoing fade 60 are preserved. This requests the incoming
-start/fade task without the old 60-step wait so the fades can overlap; actual
-audio timing remains to be checked in a live test.
+For that exact match only, the effective tuple is the four configured values
+in the order `[outgoingDelay,outgoingFade,incomingDelay,incomingFade]`. The
+default remains `[0,60,0,120]`; the custom command above produces
+`[0,90,0,150]`. Configuring the outgoing fade no longer requires changing the
+original eligibility match. The default requests the incoming start/fade task
+without the old 60-step wait so the fades can overlap; actual audio timing
+remains to be checked in a live test.
 The probe logs both `originalTimings=[0,60,60,0]` and
-`effectiveTimings=[0,60,<configured delay>,<configured fade>]`, and its `ARMED`
-line reports both configured values and `probeStreamVolume`. Natural tuples
+`effectiveTimings=[<the four configured values>]`, and its `ARMED` line reports
+all four configured values and `probeStreamVolume`. Natural tuples
 `0,20,0,0` and `0,0,0,0`, special/jingle requests, and unrelated timings are
 untouched.
 
@@ -165,11 +168,10 @@ are not supported. The `nu.az` hook is transformed only when
 in the opt-in crossfade mode. Obfuscated alternate/copy
 methods are not claimed to be covered.
 
-The opt-in mode, 1–300 fade steps, 0–60 delay steps, and volume-probe flag are
-validated independently by Gradle and the agent. Unknown or invalid arguments
-fail closed. Normal `run`
-attaches with no behavior-changing mode; only `runAreaFadeTest` emits the
-narrowly scoped incoming-fade substitution.
+The opt-in mode, four 0–300 timing values, and volume-probe flag are validated
+independently by Gradle and the agent. Unknown or invalid arguments fail closed.
+Normal `run` attaches with no behavior-changing mode; only `runAreaFadeTest`
+emits the narrowly scoped four-timing substitution.
 
 ## Plugin observations
 
@@ -229,8 +231,8 @@ Illustrative shapes, not measured results:
 ```
 
 The build includes plugin snapshot tests, synthetic transformer tests (including
-observer-mode pass-through, configured 60/90/120 fades and 0/30/60 delays, invalid inputs, and
-nonmatching cases), real
+observer-mode pass-through, default/custom/zero four-value tuples, invalid
+inputs, audit-failure pass-through, and nonmatching cases), real
 `-javaagent`/`-Xverify:all` class-loading smoke tests for both agent modes against
 the resolved client, and fail-closed startup tests. Smoke tests do not initialize the target game
 classes, invoke their music methods, launch RuneLite, log in, or cross boundaries.

@@ -22,8 +22,7 @@ public final class CoreProbeLog
 	private static final int MAX_VOLUME_LINES = 512;
 	private static BufferedWriter file;
 	private static volatile boolean enabled;
-	private static volatile int configuredIncomingFade = -1;
-	private static volatile int configuredIncomingDelay = -1;
+	private static volatile CoreProbeAgent.AreaFadeSettings configuredTimings;
 	private static volatile boolean probeStreamVolume;
 	private static long volumeWindowStart;
 	private static int volumeWindowId;
@@ -44,8 +43,7 @@ public final class CoreProbeLog
 	static synchronized void initialize(Path path) throws Exception
 	{
 		enabled = false;
-		configuredIncomingFade = -1;
-		configuredIncomingDelay = -1;
+		configuredTimings = null;
 		probeStreamVolume = false;
 		volumeWindowStart = 0;
 		volumeWindowId = 0;
@@ -69,22 +67,28 @@ public final class CoreProbeLog
 
 	static void arm(CoreProbeAgent.AreaFadeSettings settings)
 	{
-		if (settings != null && (settings.incomingFade < 1
-			|| settings.incomingFade > CoreProbeAgent.MAX_INCOMING_FADE
-			|| settings.incomingDelay < 0
-			|| settings.incomingDelay > CoreProbeAgent.MAX_INCOMING_DELAY))
+		if (settings != null && (!validTiming(settings.outgoingDelay)
+			|| !validTiming(settings.outgoingFade)
+			|| !validTiming(settings.incomingDelay)
+			|| !validTiming(settings.incomingFade)))
 		{
 			throw new IllegalArgumentException("area fade settings out of range");
 		}
-		configuredIncomingFade = settings == null ? -1 : settings.incomingFade;
-		configuredIncomingDelay = settings == null ? -1 : settings.incomingDelay;
+		configuredTimings = settings;
 		probeStreamVolume = settings != null && settings.probeStreamVolume;
 		enabled = true;
 		status("ARMED", "version=1.12.39 targets=5 mode="
-			+ (settings == null ? "OBSERVE_ONLY" : "AREA_INCOMING_FADE_TEST"
-				+ " configuredIncomingFade=" + settings.incomingFade
+			+ (settings == null ? "OBSERVE_ONLY" : "AREA_TIMING_TEST"
+				+ " configuredOutgoingDelay=" + settings.outgoingDelay
+				+ " configuredOutgoingFade=" + settings.outgoingFade
 				+ " configuredIncomingDelay=" + settings.incomingDelay
+				+ " configuredIncomingFade=" + settings.incomingFade
 				+ " probeStreamVolume=" + settings.probeStreamVolume));
+	}
+
+	private static boolean validTiming(int value)
+	{
+		return value >= 0 && value <= CoreProbeAgent.MAX_TIMING;
 	}
 
 	static synchronized void disable(String reason)
@@ -164,32 +168,34 @@ public final class CoreProbeLog
 	 * only into the opt-in transformer variant. It fails closed: unless the
 	 * probe is armed, its mode is enabled, the ordinary route is in use, and
 	 * every timing exactly matches the observed area signature, the original
-	 * delay/fade pair is returned. The replacement is returned only after its
-	 * audit line has been written successfully. A long packs both int values so
-	 * the injected method can update both locals from one eligibility decision.
+	 * four-value array is returned. The replacement is returned only after its
+	 * audit line has been written successfully. A single fixed-size array carries
+	 * all four integers through one eligibility decision.
 	 */
-	public static long effectiveIncomingTimings(int outgoingDelay, int outgoingFade,
+	public static int[] effectiveTimings(int outgoingDelay, int outgoingFade,
 		int incomingDelay, int incomingFade, boolean specialRoute)
 	{
-		int testFade = configuredIncomingFade;
-		int testDelay = configuredIncomingDelay;
-		if (!enabled || testFade < 1 || specialRoute
+		int[] original = {outgoingDelay, outgoingFade, incomingDelay, incomingFade};
+		CoreProbeAgent.AreaFadeSettings settings = configuredTimings;
+		if (!enabled || settings == null || specialRoute
 			|| outgoingDelay != 0 || outgoingFade != 60
 			|| incomingDelay != 60 || incomingFade != 0)
 		{
-			return packIncomingTimings(incomingDelay, incomingFade);
+			return original;
 		}
 		try
 		{
+			int[] effective = {settings.outgoingDelay, settings.outgoingFade,
+				settings.incomingDelay, settings.incomingFade};
 			long monoNanos = System.nanoTime();
 			String caller = callerOf("ij.af");
 			synchronized (CoreProbeLog.class)
 			{
 				int nextWindowId = volumeWindowId + 1;
 				write(header(monoNanos)
-					+ " method=ij.af override=AREA_INCOMING_FADE"
+					+ " method=ij.af override=AREA_TIMINGS"
 					+ " originalTimings=[0,60,60,0]"
-					+ " effectiveTimings=[0,60," + testDelay + "," + testFade + "]"
+					+ " effectiveTimings=" + Arrays.toString(effective).replace(" ", "")
 					+ " specialRoute=false probeStreamVolume=" + probeStreamVolume
 					+ (probeStreamVolume ? " volumeWindow=" + nextWindowId : "")
 					+ " caller=" + caller + " callerCategory=" + category(caller));
@@ -202,19 +208,14 @@ public final class CoreProbeLog
 					volumeLimitReported = false;
 				}
 			}
-			return packIncomingTimings(testDelay, testFade);
+			return effective;
 		}
 		catch (Throwable ignored)
 		{
 			try { disable("override-audit-failed"); }
 			catch (Throwable alsoIgnored) { }
-			return packIncomingTimings(incomingDelay, incomingFade);
+			return original;
 		}
-	}
-
-	private static long packIncomingTimings(int delay, int fade)
-	{
-		return ((long) delay << 32) | (fade & 0xffffffffL);
 	}
 
 	/**
@@ -234,7 +235,7 @@ public final class CoreProbeLog
 	// The explicit clock also lets fixture tests verify expiry without sleeping.
 	static void streamVolumeWriteAt(Object stream, int requestedVolume, long monoNanos)
 	{
-		if (!enabled || !probeStreamVolume || configuredIncomingFade < 1)
+		if (!enabled || !probeStreamVolume || configuredTimings == null)
 		{
 			return;
 		}
