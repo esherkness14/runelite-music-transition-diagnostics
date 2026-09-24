@@ -738,3 +738,162 @@ malformed, negative, and over-300 project properties before JavaExec launch. The
 verified-client smoke tests load the transformed methods with `-Xverify:all`
 without invoking game music methods. A live RuneScape test was not performed
 in this implementation pass.
+
+## Architecture pass: preferred handoff, login path, and stable RuneLite integration (2026-09-23)
+
+Research/documentation only: no live test, code change, playback change,
+upstream submission, or final UI in this pass. Earlier Experiment 7 notes
+describe an earlier overlapping-crossfade *hypothesis*, not the user's later
+subjective preference.
+
+### Preferred area timings and future UI
+
+The user completed subjective area tuning and reports that effective native
+`[outgoingDelay,outgoingFade,incomingDelay,incomingFade] = [0,200,200,200]`
+produces the gradual transition they wanted. This is candidate **Smooth
+Defaults**. The observed original area tuple `[0,60,60,0]` is **Vanilla
+Timings**. These are scheduler steps, not milliseconds. In Smooth Defaults,
+the old track starts fading immediately for 200 steps; incoming start waits
+200 steps and then fades in for 200. This is a gradual *handoff* scheduled
+near outgoing fade completion, **not** an overlapping crossfade. Loading and
+task service can shift exact audible timing. The current opt-in Gradle harness
+retains its historical `[0,60,0,120]` default; it was not changed here.
+
+The eventual plugin should have a master switch, four separate area controls,
+`Restore Smooth Defaults` -> `[0,200,200,200]`, and `Restore Vanilla Timings`
+-> `[0,60,60,0]`. Disabled means **do not mutate native timing arguments**,
+not “substitute vanilla values.” A separate optional `Fade music in on login`
+setting should be independently configurable, with 200 steps as a candidate
+default. None of this UI or login behavior was implemented.
+
+### Confirmed pinned-binary and existing-log findings
+
+- Rechecked the [official launcher bootstrap](https://static.runelite.net/bootstrap.json)
+  on 2026-09-23. It still lists `injected-client-1.12.39.jar`, SHA-256
+  `25f42961c400bd9dfff1554402441c0ba6d1cffd011163cb9b0b4c42ae194f85`.
+  All short native names below are verified only for that jar. The exact
+  `ij.af` descriptor is `(Ljava/util/ArrayList;IIIIZI)V`; the trailing int
+  is an obfuscation guard, not a fifth timing.
+- In the **existing** `build/music-core-probe.log` from an earlier run, the
+  first startup-correlated request at 2026-09-24 00:00:20.675 UTC was
+  `rj.bc requestedIds=[49]`, original `[0,0,0,0]`, caller `client.ia`
+  (packet path). At 00:00:20.685, `ij.af` **accepted** one request with
+  `[0,0,0,0]`, `specialRoute=false`, caller `rj.bc`. No override applied.
+  A second `rj.bc [49] [0,60,60,0]` at 00:00:20.697 has **no** matching
+  accepted `ij.af` call in this trace; do not mistake that request attempt
+  for a scheduled transition. Later accepted area requests did use
+  `[0,60,60,0]` and were overridden to `[0,200,200,200]`.
+- Focused diagnostic lines in the prior RuneLite `client.log` show an empty
+  active MIDI list and unavailable player location at 00:00:19.238, player
+  location available by the subsequent music-varp update, and active MIDI
+  changing `[] -> [{archiveId=49,isJingle=false}]` at 00:00:20.718. This
+  strongly associates the accepted `[49] [0,0,0,0]` with first normal
+  music after login. However no GameStateChanged marker or explicit login
+  reason was logged: this is **startup-correlated**, not proof that all or
+  only login requests use this tuple. The varp track value is not assumed
+  to equal the archive ID. Only diagnostic lines were inspected; no account
+  or session material was read or reproduced.
+- Verified 1.12.39 request flow for this call is `client.ia` (packet) ->
+  `rj.bc` -> `ij.af`. `rj.bc` can suppress duplicates/sentinels or divert
+  requests, so only `ij.af` demonstrates task scheduling. The exact packet
+  variant for archive 49 was not separately logged.
+- At `ij.af`, `if.aj` stores the four timings before task construction. The
+  pinned no-active-request branch builds loading, incoming delay, start, and
+  fade-in tasks, with no old-request fade-out branch. Verified
+  `StartSongTask` sets the individual MIDI stream to zero before starting;
+  `FadeInTask` ramps that request's stream toward its target over the
+  incoming-fade count. Thus a first normal request that reaches this branch
+  could *technically* use `incomingFade=200` without changing global volume.
+  This is a static capability, **not** a live login-fade result or proof of
+  how muted/jingle/duplicate/relogin states behave.
+
+### Current public API and upstream issue, rechecked
+
+- Current [Client.java](https://github.com/runelite/runelite/blob/master/runelite-api/src/main/java/net/runelite/api/Client.java)
+  exposes `getActiveMidiRequests()` and global `getMusicVolume()` /
+  `setMusicVolume()`, but no accepted-request timing hook/setter. Current
+  [MidiRequest.java](https://github.com/runelite/runelite/blob/master/runelite-api/src/main/java/net/runelite/api/MidiRequest.java)
+  exposes `isJingle()` and `getArchiveId()`, not timing or request reason.
+  This is about inspected **public interfaces**, not absence of internal
+  machinery. [Issue #10692](https://github.com/runelite/runelite/issues/10692)
+  remains open as checked 2026-09-23; it broadly asks for music-player APIs
+  and does not specify or approve this hook.
+- Current [Hooks.java](https://github.com/runelite/runelite/blob/master/runelite-client/src/main/java/net/runelite/client/callback/Hooks.java)
+  routes ordinary `post` to the event bus synchronously, unlike
+  `postDeferred`. The current [EventBus.java](https://github.com/runelite/runelite/blob/master/runelite-client/src/main/java/net/runelite/client/eventbus/EventBus.java)
+  invokes subscribers immediately in priority/name order and catches their
+  `Exception`s. Thus a synchronous mutable pre event is technically possible;
+  a deferred event would be too late. Exception handling alone does not
+  provide atomic validation/conflict policy for multiple timing writers.
+- The public source inspected here does not contain the private injected
+  client mapping for `ij.af`. Its exact mixin/injection source file, mapping
+  strategy, and maintainer acceptance remain unverified. Do not invent a
+  private RuneLite class name or expose obfuscated names in public API.
+
+### Three possible integration designs (proposals, not implementations)
+
+1. **Synchronous mutable pre-schedule event:** fire once after a native
+   request has been accepted but before `if.aj`/task construction. Include
+   immutable original four-tuple, editable effective four-tuple, request IDs
+   if safely available, and verified special/jingle context. Advantage:
+   smallest familiar `@Subscribe` plugin surface; disabled plugins leave it
+   untouched. Risks: multiple subscribers can conflict, priority/order is
+   observable, invalid values need rejection, and callbacks must be fast.
+   A name such as `MusicTransitionPreScheduled` should communicate mutation;
+   do not call a writable object a merely observational event.
+2. **Client API policy callback/provider:** give the plugin immutable
+   original timings/context and accept one complete replacement or explicit
+   `unchanged`. Advantage: atomic one-writer, fail-closed semantics and clear
+   validation. Risks: registration/lifecycle and cross-plugin ownership need
+   rules; it still needs an internal injection point. A late setter on an
+   already built request or global music volume would not solve this.
+3. **Core-only injected policy with plugin configuration bridge:** core owns
+   timing validation/conflicts. Advantage: central control; risks: more
+   upstream policy code, more coupling to this use case, less reusable API.
+   The 1.12.39 Java-agent/obfuscated-name harness is development-only and
+   must not become a Plugin Hub implementation.
+
+**Recommended smallest upstream change:** a narrow synchronous intervention
+at the accepted normal-music scheduler entry, before timing storage/tasks,
+with an immutable original tuple, a single validated effective tuple, and
+`unchanged`/fail-closed behavior. A pre event best matches the existing bus
+if RuneLite maintainers accept explicit writer-order/conflict semantics;
+otherwise prefer the callback/provider for atomicity. Rewrite all four
+timing arguments as one decision, use native-step units, validate a bounded
+nonnegative range, and leave special/jingle routes alone unless separately
+specified. The event must not assert `AREA` when the client did not establish
+that semantic reason.
+
+Likely upstream modules/files: a new public event/value type under
+`runelite-api/src/main/java/net/runelite/api/events/` (or a small type plus
+callback contract under `net.runelite.api`); `Client.java` only for the
+provider design; the injected-client mapping/hook layer at accepted scheduler
+entry; and injection/core tests for normal, special, no-active, invalid, and
+unchanged cases. Existing `runelite-client` callback/EventBus code may need
+no change for an ordinary synchronous event; a provider would require
+registration/bridge work. These are **likely touchpoints**, not a verified
+upstream patch or known private file paths. The eventual third-party plugin
+would own user settings, preset actions, enable policy, request-context
+policy, audit/UX and tests; it must not own raw bytecode or geographic maps.
+
+### Can one hook cover area, natural progression, and login?
+
+The observed area calls, natural-progression calls, and startup-correlated
+request all reached `ij.af`. So **one hook can expose generic accepted-request
+timings** for those observed cases. It cannot safely label semantic `AREA`,
+`NATURAL`, or `LOGIN` from the tuple alone. A later natural request and the
+startup-correlated one both used `[0,0,0,0]`; archive 151 used different
+tuples in area and natural contexts. `specialRoute=false` is not proof of
+geographic change, and an empty active list might also follow track end,
+stop, or music re-enable. A polished independent area/login/natural policy
+probably needs additional verified source context or a second higher-level
+hook. The literal `[0,60,60,0]` remains an **experimental** area eligibility
+signature, not a final architecture.
+
+Smallest next **read-only** experiment: for first accepted normal requests
+on login/relogin, then natural end and music re-enable, correlate bounded
+GameStateChanged markers with accepted IDs/timings, native active-list-empty
+state, and jingle/special state. Do not capture packet payloads, account or
+session data. This would test whether `[0,0,0,0]` repeats for login and
+whether any safe startup predicate exists; it would not authorize changing
+login playback, building the UI, or opening an upstream PR.

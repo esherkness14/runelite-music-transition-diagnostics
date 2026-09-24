@@ -3,10 +3,14 @@
 ## Project goal
 
 This repository is a temporary reverse-engineering spike toward making OSRS
-music transitions smooth. The current desired behavior is an overlapping
-crossfade: fade the old track out immediately while starting the new track at
-zero volume without a deliberate delay, then fade it in. The eventual behavior
-should ideally cover both area-triggered changes and natural progression.
+music transitions smooth. Subjective area tuning now favors a gradual handoff:
+the old track fades immediately while the incoming start waits approximately
+until that fade completes, then fades in. The candidate **Smooth Defaults**
+native tuple is `[outgoingDelay, outgoingFade, incomingDelay, incomingFade] =
+[0,200,200,200]`; **Vanilla Timings** are `[0,60,60,0]`. These are scheduler
+steps, not milliseconds. Do not describe the preferred tuple as an overlapping
+crossfade. The eventual behavior should ideally cover area-triggered changes,
+natural progression, and optionally a separately configured fade on login.
 
 Except for an explicitly authorized, opt-in experiment, diagnostics must remain
 read-only: do not change playback, volume, varps, varclients, scripts, or other
@@ -35,6 +39,9 @@ client data before designing any mapping.
   `MUSIC_LAST_TRACK` update.
 - The Draynor Manor boundary is within a single RuneScape region, so region ID
   alone cannot represent the music boundary.
+- Live area tuning found `[0,200,200,200]` subjectively produces the gradual
+  transition the user wanted. This is a candidate default, not a proven
+  universal timing policy or proof of exact audible overlap.
 
 Treat these as experimental observations, not permanent API contracts. Record
 new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
@@ -74,7 +81,8 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
 - Experiment 4 live tests found a probably audible but subtle 60-step incoming
   fade. Archive 151 appeared with `0,0,0,0` in natural progression and
   `0,60,60,0` at an area boundary: timings depend on request context. Leave
-  login/startup fading as a future question; do not investigate it yet.
+  the exact original tuple as a development-only eligibility signature, not
+  a production area classifier.
 - Experiment 5 live tests confirmed 120-step incoming-fade overrides. The user
   heard a gradual overall transition but not a clearly continuous incoming
   ramp. Experiment 6 confirmed that the verified `nu.az(II)V` stream-volume
@@ -83,8 +91,22 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   an overlapping crossfade with default effective tuple `[0,60,0,120]`.
   High-volume setter logging is off by default, available only with explicit
   `-PprobeStreamVolume=true` in the opt-in launcher. Treat setter calls as
-  measurements, not proof of perceived loudness. Leave login/startup fading
-  for later.
+  measurements, not proof of perceived loudness. This was an earlier experiment;
+  the later preferred area tuple is `[0,200,200,200]`. Login/startup research is
+  now explicitly in scope; do not implement or live-test login fading without
+  authorization.
+- The eventual plugin should have a master enable switch (disabled means **no
+  native timing mutation**), four configurable area timings, and distinct
+  `Restore Smooth Defaults` (`[0,200,200,200]`) and `Restore Vanilla Timings`
+  (`[0,60,60,0]`) actions. An optional, independent login fade is desired;
+  200 native steps is its candidate default. Do not build this UI yet.
+- The Java agent and obfuscated-name hooks are development-only evidence, not
+  the production Plugin Hub architecture. Current public RuneLite API does not
+  expose accepted music timing arguments. Investigate the smallest stable
+  RuneLite-side pre-task-graph API/hook without exposing obfuscated names or
+  inventing an `AREA` classification. One scheduler hook can see multiple
+  request origins but may need additional context to distinguish them. See the
+  latest architecture section in `RESEARCH-NOTES.md`.
 - Preserve Java 11 compatibility and the official `runelite/example-plugin`
   Gradle structure. Use `./gradlew build` (or `.\gradlew.bat build` on Windows)
   after code changes.
