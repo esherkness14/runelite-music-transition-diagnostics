@@ -96,6 +96,18 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   `ZERO_TIMING_INCOMING_FADE`, **never** as `LOGIN` or `NATURAL`. It is not a
   production classifier, and normal `run` remains observation-only. The
   existing area override and its separate audit are unchanged.
+- The subsequent live opt-in test succeeded with area/replacement
+  `[0,60,60,0] -> [0,200,200,200]` and ordinary zero-timing
+  `[0,0,0,0] -> [0,0,0,200]`. The tested area changes and teleport retained
+  the desired smooth handoff; the later real song in natural progression and
+  the first normal song after login faded in. Natural cadence felt different
+  from an area transition but acceptable. A 200-step incoming fade remains
+  the desired zero-timing candidate. For MVP, these two observed zero-timing
+  cases need no login-versus-natural classifier. This does not establish that
+  every future zero-timing request is safe to override. Local behavior
+  prototyping is essentially complete; keep the diagnostic harness intact
+  as a reference and do not add classification probes without a concrete
+  upstream implementation need.
 - Experiment 4 live tests found a probably audible but subtle 60-step incoming
   fade. Archive 151 appeared with `0,0,0,0` in natural progression and
   `0,60,60,0` at an area boundary: timings depend on request context. Leave
@@ -128,6 +140,15 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   and natural policies. The opt-in zero-tuple test is intentionally broader
   and should be evaluated before deciding whether production needs finer
   classification. `RESEARCH-NOTES.md` records the static trace and experiment.
+- A current official `runelite/runelite` checkout was inspected at
+  `0d4278355dd845629fc61217e6c4e67a551c69b4` (1.12.40-SNAPSHOT).
+  Its public tree contains API/client modules but no injector, mixin, RS-API,
+  or native scheduler source; `runelite-client` consumes the prebuilt
+  `net.runelite:injected-client` as `runtimeOnly`. A public event or callback
+  alone cannot mutate the four native arguments. Do not add an unconnected
+  API or copy the development agent into RuneLite. The upstream source-level
+  bridge requires access to RuneLite's current injected-client build/mapping
+  implementation or a maintainer-supported injection extension.
 - Preserve Java 11 compatibility and the official `runelite/example-plugin`
   Gradle structure. Use `./gradlew build` (or `.\gradlew.bat build` on Windows)
   after code changes.

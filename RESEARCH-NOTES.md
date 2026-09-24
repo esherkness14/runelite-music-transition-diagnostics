@@ -1110,7 +1110,86 @@ methods. A real Gradle invocation with `-PnaturalIncomingFade=abc` failed
 before JavaExec launched the client, as intended. No live RuneScape test was
 performed here.
 
-The next empirical comparison should manually test first music after startup
-and multiple stationary natural endings with volume tracing off, recording
-whether each entrance is perceptibly smooth or creates an unwanted quiet
-interval. Only then decide whether production needs separate classification.
+The planned empirical comparison was to test first music after startup and
+stationary natural endings with volume tracing off, then decide whether
+production needed separate classification. Its live result is recorded below.
+
+### Live results: area and ordinary zero-timing overrides (2026-09-23)
+
+The user completed that opt-in listening test with area/replacement calls
+`[0,60,60,0] -> [0,200,200,200]` and ordinary zero-timing calls
+`[0,0,0,0] -> [0,0,0,200]`. The tested area/context transitions still had
+the desired smooth handoff, and the previously tested teleport continued to
+inherit that behavior. On natural song progression, the incoming real song
+faded in gradually. The first normal song after login faded in too. Natural
+end-of-song cadence felt somewhat different from an area/context transition,
+but was acceptable and needs no further tuning for this MVP. Incoming fade
+200 native scheduler steps remains the desired default for the zero-timing
+case. These are user-reported live results; no independent audio waveform or
+new raw trace was analyzed in this documentation pass.
+
+For the two *observed* ordinary zero-timing cases, separate startup-versus-
+natural classification is not needed for the MVP. This does not prove that
+every possible `[0,0,0,0]` request has the same semantics or will be safe to
+change in a final plugin. The local behavior-prototyping phase is essentially
+complete. Keep the development harness unchanged as a regression/reference
+implementation; add no more diagnostic classifiers absent a concrete need
+discovered during upstream integration.
+
+## Official RuneLite source-level bridge feasibility (2026-09-23)
+
+### Checkout and confirmed source findings
+
+- Cloned the current official `https://github.com/runelite/runelite.git` into
+  `C:\Projects\runelite`, fetched `origin/master`, and created the local-only
+  `music-transition-api-prototype` branch at commit
+  `0d4278355dd845629fc61217e6c4e67a551c69b4`.
+- The build declares version `1.12.40-SNAPSHOT`. Checked-in modules include
+  `runelite-api` and `runelite-client`, but not an injector, mixin module,
+  `runescape-api`/RS interfaces, or the native scheduler implementation.
+  Git-tracked file inspection found no `MethodHook`/mixin/injector sources.
+- `runelite-client/build.gradle.kts` declares
+  `runtimeOnly("net.runelite:injected-client:${project.version}")`.
+  Therefore this checkout compiles the public API/client separately and obtains
+  the externally built injected client at runtime; it does not build or
+  source-edit the injected client.
+- `Client.getCallbacks()` and `Callbacks.post(Object)` exist. The concrete
+  `Hooks.post` calls `EventBus.post` synchronously; `postDeferred` is explicitly
+  delayed. A mutable pre-event is plausible as a *public contract* only if
+  native injection calls it before the timing store/task construction.
+  Nothing in this checkout supplies that native call or lets it replace the
+  four Java method arguments.
+- `Client.getActiveMidiRequests()` and `MidiRequest` offer read-only active
+  request information; neither provides accepted scheduling timings. The
+  earlier `ij.af` name/descriptor belongs solely to the pinned 1.12.39
+  injected binary. No current 1.12.40 source mapping to a semantically
+  equivalent method is available in this checkout, so this pass does **not**
+  claim that name remains valid.
+
+### Why implementation stopped
+
+The requested guarantee is not merely an event carrying four integers: the
+native scheduler must receive a single chosen effective four-tuple *before*
+its timing store and task graph. An `@MethodHook`-style notification, even if
+available in a private injector, cannot be assumed to rewrite argument locals.
+The actual current injector/mixin source and mapping are absent from the
+official public checkout, so neither argument-replacement support nor a safe
+source-level wrapper at the accepted scheduler entry can be verified. A
+`runelite-api` event/provider plus `Hooks` implementation would compile but
+have no producer at the required native point; tests of such a disconnected
+surface would give false confidence. Adding a runtime ASM/Java agent, binary
+hash gate, or obfuscated method name to RuneLite would violate the desired
+upstream architecture.
+
+Following the user's explicit stop condition, no RuneLite source files were
+changed and no API/bridge tests were added. The local upstream branch is clean;
+there is no upstream patch to build. A maintainer with access to the current
+injected-client source/build must identify the stable scheduler mapping and
+confirm whether a source-level `@Replace`/copy or equivalent supported
+mechanism can atomically substitute the four values before native task setup.
+Only then should a small synchronous public event or provider, native bridge,
+and pass-through/mutation/special-route tests be implemented. A synchronous
+event matches RuneLite's existing bus but needs explicit multi-writer ordering;
+a single provider gives atomic ownership but needs registration/lifecycle.
+Neither is usable alone without the native producer. No music policy tuple,
+geographic mapping, or login/natural classifier belongs in RuneLite core.
