@@ -9,8 +9,9 @@ until that fade completes, then fades in. The candidate **Smooth Defaults**
 native tuple is `[outgoingDelay, outgoingFade, incomingDelay, incomingFade] =
 [0,200,200,200]`; **Vanilla Timings** are `[0,60,60,0]`. These are scheduler
 steps, not milliseconds. Do not describe the preferred tuple as an overlapping
-crossfade. The eventual behavior should ideally cover area-triggered changes,
-natural progression, and optionally a separately configured fade on login.
+crossfade. **Smooth natural song progression is part of the MVP**, alongside
+area/replacement transitions. A separately configured fade on login is a
+nice-to-have and must not block the main feature.
 
 Except for an explicitly authorized, opt-in experiment, diagnostics must remain
 read-only: do not change playback, volume, varps, varclients, scripts, or other
@@ -42,6 +43,15 @@ client data before designing any mapping.
 - Live area tuning found `[0,200,200,200]` subjectively produces the gradual
   transition the user wanted. This is a candidate default, not a proven
   universal timing policy or proof of exact audible overlap.
+- At least one live teleport into a different music area followed the currently
+  overridden replacement path and therefore received the smooth transition.
+  This does not establish that all teleports use that path.
+- Natural progression remains perceptibly vanilla under the current narrow
+  area override. Observed natural scheduling includes a first accepted
+  non-jingle request for archive 147 with `[0,20,0,0]`, followed roughly
+  1.18 seconds later by a next-song request with `[0,0,0,0]`. Archive 147's
+  content and audible role remain unknown. Startup has also accepted
+  `[0,0,0,0]`, so that tuple is not a natural-progression classifier.
 
 Treat these as experimental observations, not permanent API contracts. Record
 new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
@@ -103,10 +113,13 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
 - The Java agent and obfuscated-name hooks are development-only evidence, not
   the production Plugin Hub architecture. Current public RuneLite API does not
   expose accepted music timing arguments. Investigate the smallest stable
-  RuneLite-side pre-task-graph API/hook without exposing obfuscated names or
-  inventing an `AREA` classification. One scheduler hook can see multiple
-  request origins but may need additional context to distinguish them. See the
-  latest architecture section in `RESEARCH-NOTES.md`.
+  RuneLite-side **generic accepted-music-scheduling** API/hook without exposing
+  obfuscated names or inventing `AREA`, `NATURAL`, `TELEPORT`, or `LOGIN`
+  classifications. One scheduler hook sees multiple request origins but needs
+  reliable context before the eventual plugin can apply separate replacement
+  and natural policies. Preserve the experimental area eligibility; do not
+  change natural requests until the two-request sequence is understood.
+  `RESEARCH-NOTES.md` records the current static trace and next read-only test.
 - Preserve Java 11 compatibility and the official `runelite/example-plugin`
   Gradle structure. Use `./gradlew build` (or `.\gradlew.bat build` on Windows)
   after code changes.

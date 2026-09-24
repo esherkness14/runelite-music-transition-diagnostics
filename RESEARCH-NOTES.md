@@ -897,3 +897,168 @@ state, and jingle/special state. Do not capture packet payloads, account or
 session data. This would test whether `[0,0,0,0]` repeats for login and
 whether any safe startup predicate exists; it would not authorize changing
 login playback, building the UI, or opening an upstream PR.
+
+## Natural-progression MVP and native end-path trace (2026-09-23)
+
+### New live result and priority
+
+The user reports: **at least one live teleport into a different music area
+followed the currently overridden replacement path and therefore received
+the smooth `[0,200,200,200]` transition.** This proves only the tested case,
+not all teleports. Natural song ending remained perceptibly vanilla because
+the development harness still matches only the original `[0,60,60,0]` area
+signature. Smooth natural progression is now **MVP**, not optional polish.
+Login/startup fade is a nice-to-have and must not block it. Do not broaden the
+area harness match or mutate either natural request on this evidence alone.
+
+### Artifact and signature recheck before native analysis
+
+The current [official bootstrap](https://static.runelite.net/bootstrap.json)
+still lists `injected-client-1.12.39.jar`, SHA-256
+`25f42961c400bd9dfff1554402441c0ba6d1cffd011163cb9b0b4c42ae194f85`.
+Offline Gradle `dependencyInsight --dependency injected-client --configuration
+testRuntimeClasspath` resolved `net.runelite:client:latest.release` to client
+**1.12.39** and its injected-client dependency to **1.12.39**. The cached
+injected jar is 4,207,579 bytes and matches that SHA-256. `javap -p -s`
+reconfirmed `nu.aj(Lnu;I)V`, `rj.bc(Ljava/util/ArrayList;IIIIB)V`, and
+`ij.af(Ljava/util/ArrayList;IIIIZI)V`. These are verified names/signatures
+for this pinned artifact only; a future release requires fresh inspection.
+No behavior-changing instrumentation was attempted.
+
+### Confirmed native data flow, with explicit limits
+
+1. In `nu.aj(nu,int)`, the MIDI reader processes a terminal track event
+   (`nc.ao(...) == 1`), marks that reader track done, and checks whether all
+   reader tracks are complete. If complete and the stream is not looping (or
+   the reader time is zero), it resets the stream and clears the MIDI reader
+   (`nu.kx`, `nc.af`). Other branches continue MIDI events or loop. This
+   specific completion branch does **not** call `rj.bc`, `ij.af`, mutate
+   `np.ac`, or select another archive. It is a native audio-end point, but
+   static inspection alone does not prove when it ran relative to the user's
+   observed first `[147]` request. In particular, `MUSIC_CURRENT_TRACK=-1`
+   should not be treated as advance notice of remaining audible MIDI.
+2. `rj.bc` receives **upstream-supplied** archive IDs and all four timings.
+   It checks empty/sentinel/duplicate and music-volume/jingle conditions,
+   constructs normal `nb` requests from the music archive for accepted IDs,
+   and normally forwards them to `ij.af(...,specialRoute=false)`. During
+   jingle-active handling it can remember the request/timings instead. The
+   1.12.39 callers include packet handling (`client.ia` and copies), script
+   song opcodes (`ee.bt` and copies), and other direct scheduler/replay paths.
+   No literal 147/20 source or natural-reason parameter was established in
+   the inspected request function. The earlier `[147] [0,20,0,0]` runtime
+   record did not preserve its upstream caller category in the surviving
+   core-probe log, so its exact origin remains unproven.
+3. On the ordinary accepted path, `ij.af` records normal requests in
+   `np.ac` (remembered non-jingle requests), stores the four timings via
+   `if.aj`, then constructs loading/start/fade/clear tasks. `np.ac` can be
+   replayed after other music states such as a jingle; it is not a
+   natural-progression flag. `np.ab` is the active-request list, not proof
+   that every listed stream remains audible. With an old active request,
+   outgoing and incoming task chains can run concurrently after loading.
+   Under `[0,20,0,0]`, the old request is scheduled for a 20-step fade/clear
+   while the new request's start has no delay or fade. Under `[0,0,0,0]`,
+   outgoing clear and incoming start/fade are immediate native steps.
+4. The outgoing `wl` cleanup task removes an old `nb` from `np.ab` and calls
+   `ac.az(archiveId,fileId,...)`; listeners include `client.il`, which may
+   send a packet containing the removed archive ID if connection, volume,
+   and jingle guards pass. That callback occurs for ordinary replacement
+   cleanup too, not exclusively natural end. A server response to this
+   notification is a plausible source of the later next-song request, but
+   the inspected bytecode and existing logs do **not** prove that causal
+   chain or identify the packet carrying it. `mc.al` services already-built
+   tasks; it does not itself choose the next archive.
+
+### What archive 147 is, and what remains unknown
+
+The prior Experiment 3 accepted `[147] [0,20,0,0]` before a later next-song
+request `[151] [0,0,0,0]` about 1.18 seconds later. Archive 147 is **not**
+an ignored sentinel at `rj.bc`/`ij.af`: the normal request machinery creates
+an `nb` for the supplied ID and routes it through the music-archive loading
+task. Active-list membership does not prove successful loading or audible
+playback. Existing *plugin* diagnostics from two other windows with the
+natural-style varp sequence show that 147 became active with
+`isJingle=false`:
+
+| Prior diagnostic window (UTC) | Active request sequence | Timing relative to 147 appearing |
+| --- | --- | --- |
+| 2026-09-24 00:48:31–32 | `[151] -> [151,147] -> [147] -> [147,49] -> [49]` | Old 151 removed after ~0.462 s; next 49 added after ~1.200 s. |
+| 2026-09-24 00:52:35–36 | `[76] -> [76,147] -> [147] -> [147,327] -> [327]` | Old 76 removed after ~0.461 s; next 327 added after ~1.200 s. |
+
+In both windows `MUSIC_CURRENT_TRACK` changed to `-1` and
+`MUSIC_LAST_TRACK` updated shortly before 147 appeared; the next current
+track was assigned about 1.2 seconds later. These snapshots do **not** include
+the native timing arguments of those particular windows, nor whether 147
+produced audible PCM, what its MIDI content is, or why it was selected.
+Do not label archive 147 silence, a placeholder, or a geographic music track
+without further evidence. Its recurring intermediate *position* is observed;
+its semantic role is not established.
+
+### Natural versus startup before task construction
+
+The later next-song request `[0,0,0,0]` is not distinguishable from the
+startup-correlated `[0,0,0,0]` by tuple alone. Nor does `specialRoute=false`
+classify it. At the later request, a recently accepted 147 may still be in
+`np.ab`/`np.ac`; at the observed startup request the public active list was
+empty. That is a **candidate correlation**, not a reliable generic reason:
+an active list may be empty after natural exhaustion/stops, and remembered
+requests can exist for replacement and jingle recovery. The varp sequence
+`CURRENT_TRACK=-1` plus `LAST_TRACK` update is also useful historical
+context, but it is not an explicit native scheduling reason, and a startup
+baseline can include `CURRENT_TRACK=-1`. A short-lived marker from the
+verified MIDI-end branch might help, but the observed first request could
+precede that branch, so its ordering must be measured. No stable condition
+available **at `ij.af` alone** has yet been proven to classify every natural
+versus startup request before task construction.
+
+### Candidate natural policy and generic API implication
+
+The smallest plausible natural intervention is to leave the first
+`[147] [0,20,0,0]` request native and, **only after a reliable two-request
+natural correlation is established**, change the *later real next-song*
+request from `[0,0,0,0]` to candidate `[0,0,0,200]`. That changes only its
+incoming-fade duration. The pinned `StartSongTask` begins its stream at zero;
+`FadeInTask` then raises the individual stream volume over 200 native steps.
+This avoids deliberately replaying/fading the already-ending old song,
+delaying the next song by 200 steps, or changing archive 147's unknown role.
+However, if 147 has audible content or the existing ~1.2-second interval is
+already a silence gap, a 200-step fade might still feel too quiet/late. A
+shorter incoming duration (e.g. 120 steps) is a second **test candidate**,
+not a chosen policy. Neither tuple should be applied by literal
+`[0,0,0,0]` matching because startup has the same original tuple. No
+natural timing override was implemented or live-tested here.
+
+The eventual RuneLite addition should be a **generic accepted-music-schedule
+pre-task-graph hook**, not an area-only API. A public contract could expose
+immutable original and mutable/returned effective
+`outgoingDelay/outgoingFade/incomingDelay/incomingFade`, safely copied request
+archive IDs, genuinely known jingle/special context, and (if verifiable)
+request origin or preexisting/remembered request summaries. It must not
+invent `AREA`, `NATURAL`, `TELEPORT`, or `LOGIN` enum values. One hook at
+`ij.af` can perform generic four-value intervention for accepted requests;
+the *policy distinction* may require a second, read-only native-end/source
+marker or richer upstream context. MVP policy goal: smooth ordinary
+replacements (including the tested teleport); smooth reliably identified
+natural next-song arrivals; leave startup/login and special/jingles native.
+Login fade remains future optional work. The development agent's obfuscated
+names and literal area timing match are not the production API.
+
+### Smallest next experiment; no new probe code in this pass
+
+The surviving core log contains the startup and area paths but not the native
+caller/accepted-state lines for those two natural windows. Static inspection
+cannot decide whether the `[147]` request precedes or follows the actual
+`nu.aj` terminal branch, or whether B is selected by the server after the
+old-request cleanup notification. A **bounded, observation-only** next run
+should add one `NATURAL_END_OBSERVED` monotonic/stream-identity marker at the
+verified non-loop terminal `nu.aj` branch, then correlate for ~2 seconds:
+`rj.bc` upstream caller category and IDs, accepted `ij.af` IDs/timings,
+special flag, copied active/remembered IDs *before* mutation if safely
+accessible without reflection, and existing plugin varp/active-list changes.
+Only emit the marker at terminal completion and a small bounded number of
+subsequent accepted request lines; do not dump packets, scripts, PCM,
+credentials, or unrelated state. Compare natural endings against startup,
+replacement/teleport, and jingle controls. Record correlation, not a causal
+`NATURAL` label, until ordering and specificity are demonstrated. This pass
+did not add a new hook or launch the game: the existing static evidence and
+logs narrow the one remaining attribution question, and no behavior change
+is justified yet.
