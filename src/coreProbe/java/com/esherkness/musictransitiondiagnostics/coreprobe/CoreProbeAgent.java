@@ -16,7 +16,7 @@ import java.util.jar.JarFile;
 /** premain is used only by Gradle run and the isolated probe smoke tests. */
 public final class CoreProbeAgent
 {
-	static final String AREA_FADE_TEST_MODE = "area-incoming-fade-test";
+	static final String TIMING_TEST_MODE = "area-incoming-fade-test";
 	static final int MAX_TIMING = 300;
 	static final String EXPECTED_SHA256 =
 		"25f42961c400bd9dfff1554402441c0ba6d1cffd011163cb9b0b4c42ae194f85";
@@ -30,7 +30,7 @@ public final class CoreProbeAgent
 			CoreProbeLog.initialize(Path.of(System.getProperty("musicCoreProbe.log",
 				"build/music-core-probe.log")));
 			Runtime.getRuntime().addShutdownHook(new Thread(CoreProbeLog::close, "music-core-probe-close"));
-			final AreaFadeSettings settings;
+			final TimingTestSettings settings;
 			try
 			{
 				settings = parseSettings(agentArguments);
@@ -97,14 +97,14 @@ public final class CoreProbeAgent
 	}
 
 	/** Null means the ordinary observation-only launcher. */
-	static AreaFadeSettings parseSettings(String agentArguments)
+	static TimingTestSettings parseSettings(String agentArguments)
 	{
 		if (agentArguments == null || agentArguments.isEmpty())
 		{
 			return null;
 		}
 		String[] parts = agentArguments.split(":", -1);
-		if (parts.length != 6 || !AREA_FADE_TEST_MODE.equals(parts[0]))
+		if (parts.length != 7 || !TIMING_TEST_MODE.equals(parts[0]))
 		{
 			throw new IllegalArgumentException("unsupported agent mode");
 		}
@@ -112,12 +112,13 @@ public final class CoreProbeAgent
 		int outgoingFade = parseTiming(parts[2], "outgoing fade");
 		int incomingDelay = parseTiming(parts[3], "incoming delay");
 		int incomingFade = parseTiming(parts[4], "incoming fade");
-		if (!parts[5].equals("true") && !parts[5].equals("false"))
+		int zeroTimingIncomingFade = parseTiming(parts[5], "zero-timing incoming fade");
+		if (!parts[6].equals("true") && !parts[6].equals("false"))
 		{
 			throw new IllegalArgumentException("invalid stream-volume probe flag");
 		}
-		return new AreaFadeSettings(outgoingDelay, outgoingFade, incomingDelay,
-			incomingFade, Boolean.parseBoolean(parts[5]));
+		return new TimingTestSettings(outgoingDelay, outgoingFade, incomingDelay,
+			incomingFade, zeroTimingIncomingFade, Boolean.parseBoolean(parts[6]));
 	}
 
 	private static int parseTiming(String raw, String name)
@@ -134,21 +135,23 @@ public final class CoreProbeAgent
 		return value;
 	}
 
-	static final class AreaFadeSettings
+	static final class TimingTestSettings
 	{
 		final int outgoingDelay;
 		final int outgoingFade;
 		final int incomingDelay;
 		final int incomingFade;
+		final int zeroTimingIncomingFade;
 		final boolean probeStreamVolume;
 
-		AreaFadeSettings(int outgoingDelay, int outgoingFade, int incomingDelay,
-			int incomingFade, boolean probeStreamVolume)
+		TimingTestSettings(int outgoingDelay, int outgoingFade, int incomingDelay,
+			int incomingFade, int zeroTimingIncomingFade, boolean probeStreamVolume)
 		{
 			this.outgoingDelay = outgoingDelay;
 			this.outgoingFade = outgoingFade;
 			this.incomingDelay = incomingDelay;
 			this.incomingFade = incomingFade;
+			this.zeroTimingIncomingFade = zeroTimingIncomingFade;
 			this.probeStreamVolume = probeStreamVolume;
 		}
 	}

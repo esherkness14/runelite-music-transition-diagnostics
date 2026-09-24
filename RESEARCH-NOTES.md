@@ -1062,3 +1062,55 @@ replacement/teleport, and jingle controls. Record correlation, not a causal
 did not add a new hook or launch the game: the existing static evidence and
 logs narrow the one remaining attribution question, and no behavior change
 is justified yet.
+
+## Opt-in zero-timing incoming-fade behavior test (2026-09-23)
+
+This experiment **supersedes the previous plan to require natural-versus-startup
+classification before a timing test**. The user deliberately wants to test
+whether the two *currently observed* ordinary `[0,0,0,0]` cases can share the
+same native incoming fade: startup-correlated first music and the later real
+next-song request during natural progression. A positive listening result
+could simplify the eventual policy; a bad startup or natural result would
+motivate finer context. It does **not** establish that every zero tuple has
+either semantic meaning, and `ZERO_TIMING_INCOMING_FADE` is the only new
+request audit label (not `LOGIN` or `NATURAL`).
+
+Normal `run` remains observation-only. In `runAreaFadeTest` only, the prior
+`specialRoute=false` plus exact original `[0,60,60,0]` area match still uses
+the four configured area values and a separate `override=AREA_TIMINGS` audit.
+The newly authorized second branch requires `specialRoute=false` and **all
+four** original arguments exactly `[0,0,0,0]`; it preserves the first three
+and sets only incoming fade to `-PnaturalIncomingFade` (integer 0–300,
+default 200). Its audit records
+`override=ZERO_TIMING_INCOMING_FADE originalTimings=[0,0,0,0]
+effectiveTimings=[0,0,0,200]` at the default. The first observed natural
+request `[0,20,0,0]`, special/jingle calls, and unrelated tuples remain
+untouched. The startup-correlated zero request is intentionally in scope for
+the **development test**, despite login fade remaining optional for MVP.
+
+Both matches are decided in the existing single `ij.af` argument callback;
+the effective four-value array is handed to the original method only after a
+successful audit. Audit failure returns the original four values. The same
+1.12.39 hash, exact signatures, classloader, provenance, unique-resource,
+original-byte, and not-already-loaded gates remain. `probeStreamVolume=false`
+stays the default. No global volume, track selection, fade curve, varp, or
+script mutation was added. The existing area Gradle defaults remain
+`[0,60,0,120]`, while the user's preferred `[0,200,200,200]` area values
+can still be supplied explicitly; these are independent of the new
+zero-tuple incoming fade. Scheduler values are not milliseconds.
+
+Synthetic tests cover default/custom/zero/max zero-tuple fade values,
+independent area configuration and audit, ordinary observation-only mode,
+`[0,20,0,0]`, special and unrelated pass-through, agent parsing failures,
+and audit-failure fallback. `.\gradlew.bat build --offline` passed, including
+22 core-probe tests (zero failures/errors), plugin tests, and the existing
+real-jar `-Xverify:all` observation, opt-in, volume-probe, and fail-closed
+smoke processes. The smoke processes load classes but do not call game music
+methods. A real Gradle invocation with `-PnaturalIncomingFade=abc` failed
+before JavaExec launched the client, as intended. No live RuneScape test was
+performed here.
+
+The next empirical comparison should manually test first music after startup
+and multiple stationary natural endings with volume tracing off, recording
+whether each entrance is perceptibly smooth or creates an unwanted quiet
+interval. Only then decide whether production needs separate classification.

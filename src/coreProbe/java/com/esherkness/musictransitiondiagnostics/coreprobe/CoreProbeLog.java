@@ -22,7 +22,7 @@ public final class CoreProbeLog
 	private static final int MAX_VOLUME_LINES = 512;
 	private static BufferedWriter file;
 	private static volatile boolean enabled;
-	private static volatile CoreProbeAgent.AreaFadeSettings configuredTimings;
+	private static volatile CoreProbeAgent.TimingTestSettings configuredTimings;
 	private static volatile boolean probeStreamVolume;
 	private static long volumeWindowStart;
 	private static int volumeWindowId;
@@ -65,24 +65,26 @@ public final class CoreProbeLog
 		arm(null);
 	}
 
-	static void arm(CoreProbeAgent.AreaFadeSettings settings)
+	static void arm(CoreProbeAgent.TimingTestSettings settings)
 	{
 		if (settings != null && (!validTiming(settings.outgoingDelay)
 			|| !validTiming(settings.outgoingFade)
 			|| !validTiming(settings.incomingDelay)
-			|| !validTiming(settings.incomingFade)))
+			|| !validTiming(settings.incomingFade)
+			|| !validTiming(settings.zeroTimingIncomingFade)))
 		{
-			throw new IllegalArgumentException("area fade settings out of range");
+			throw new IllegalArgumentException("timing test settings out of range");
 		}
 		configuredTimings = settings;
 		probeStreamVolume = settings != null && settings.probeStreamVolume;
 		enabled = true;
 		status("ARMED", "version=1.12.39 targets=5 mode="
-			+ (settings == null ? "OBSERVE_ONLY" : "AREA_TIMING_TEST"
+			+ (settings == null ? "OBSERVE_ONLY" : "AREA_AND_ZERO_TIMING_TEST"
 				+ " configuredOutgoingDelay=" + settings.outgoingDelay
 				+ " configuredOutgoingFade=" + settings.outgoingFade
 				+ " configuredIncomingDelay=" + settings.incomingDelay
 				+ " configuredIncomingFade=" + settings.incomingFade
+				+ " configuredZeroTimingIncomingFade=" + settings.zeroTimingIncomingFade
 				+ " probeStreamVolume=" + settings.probeStreamVolume));
 	}
 
@@ -167,7 +169,7 @@ public final class CoreProbeLog
 	 * The tuning harness's only behavior-changing decision. This method is injected
 	 * only into the opt-in transformer variant. It fails closed: unless the
 	 * probe is armed, its mode is enabled, the ordinary route is in use, and
-	 * every timing exactly matches the observed area signature, the original
+	 * timings exactly match one of the two experimental signatures, the original
 	 * four-value array is returned. The replacement is returned only after its
 	 * audit line has been written successfully. A single fixed-size array carries
 	 * all four integers through one eligibility decision.
@@ -176,25 +178,34 @@ public final class CoreProbeLog
 		int incomingDelay, int incomingFade, boolean specialRoute)
 	{
 		int[] original = {outgoingDelay, outgoingFade, incomingDelay, incomingFade};
-		CoreProbeAgent.AreaFadeSettings settings = configuredTimings;
-		if (!enabled || settings == null || specialRoute
-			|| outgoingDelay != 0 || outgoingFade != 60
-			|| incomingDelay != 60 || incomingFade != 0)
+		CoreProbeAgent.TimingTestSettings settings = configuredTimings;
+		if (!enabled || settings == null || specialRoute)
+		{
+			return original;
+		}
+		boolean areaSignature = outgoingDelay == 0 && outgoingFade == 60
+			&& incomingDelay == 60 && incomingFade == 0;
+		boolean zeroSignature = outgoingDelay == 0 && outgoingFade == 0
+			&& incomingDelay == 0 && incomingFade == 0;
+		if (!areaSignature && !zeroSignature)
 		{
 			return original;
 		}
 		try
 		{
-			int[] effective = {settings.outgoingDelay, settings.outgoingFade,
-				settings.incomingDelay, settings.incomingFade};
+			int[] effective = areaSignature
+				? new int[]{settings.outgoingDelay, settings.outgoingFade,
+					settings.incomingDelay, settings.incomingFade}
+				: new int[]{0, 0, 0, settings.zeroTimingIncomingFade};
 			long monoNanos = System.nanoTime();
 			String caller = callerOf("ij.af");
 			synchronized (CoreProbeLog.class)
 			{
 				int nextWindowId = volumeWindowId + 1;
 				write(header(monoNanos)
-					+ " method=ij.af override=AREA_TIMINGS"
-					+ " originalTimings=[0,60,60,0]"
+					+ " method=ij.af override="
+					+ (areaSignature ? "AREA_TIMINGS" : "ZERO_TIMING_INCOMING_FADE")
+					+ " originalTimings=" + Arrays.toString(original).replace(" ", "")
 					+ " effectiveTimings=" + Arrays.toString(effective).replace(" ", "")
 					+ " specialRoute=false probeStreamVolume=" + probeStreamVolume
 					+ (probeStreamVolume ? " volumeWindow=" + nextWindowId : "")

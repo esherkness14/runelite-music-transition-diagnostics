@@ -108,6 +108,20 @@ public class ProbeTransformerTest
 	}
 
 	@Test
+	public void normalRunRemainsObservationOnlyForZeroSignature() throws Exception
+	{
+		CoreProbeLog.initialize(temporary.newFile("observe-zero.log").toPath());
+		CoreProbeLog.arm(null);
+		Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), false));
+		invokeIj(target, 0, 0, 0, 0, false);
+		for (int i = 1; i <= 4; i++)
+		{
+			assertEquals(0, target.getField("seen" + i).getInt(null));
+		}
+		assertEquals(1, target.getField("executions").getInt(null));
+	}
+
+	@Test
 	public void defaultAndCustomAreaTimingsRunOriginalExactlyOnce() throws Exception
 	{
 		for (int[] values : new int[][]{
@@ -128,10 +142,12 @@ public class ProbeTransformerTest
 			assertEquals(77, target.getField("seen6").getInt(null));
 			assertEquals(1, target.getField("executions").getInt(null));
 			String text = Files.readString(log);
-			assertTrue(text.contains("state=ARMED version=1.12.39 targets=5 mode=AREA_TIMING_TEST"
+			assertTrue(text.contains("state=ARMED version=1.12.39 targets=5 mode=AREA_AND_ZERO_TIMING_TEST"
 				+ " configuredOutgoingDelay=" + values[0] + " configuredOutgoingFade=" + values[1]
 				+ " configuredIncomingDelay=" + values[2] + " configuredIncomingFade=" + values[3]
+				+ " configuredZeroTimingIncomingFade=200"
 				+ " probeStreamVolume=false"));
+			assertTrue(text.contains("override=AREA_TIMINGS"));
 			assertTrue(text.contains("originalTimings=[0,60,60,0]"));
 			assertTrue(text.contains("effectiveTimings=" + Arrays.toString(values).replace(" ", "")));
 		}
@@ -176,12 +192,74 @@ public class ProbeTransformerTest
 	}
 
 	@Test
-	public void naturalSignaturesRemainUntouchedInAreaFadeMode() throws Exception
+	public void zeroTimingAuditFailureUsesOriginalAndStillRunsBody() throws Exception
+	{
+		CoreProbeLog.initialize(temporary.newFile("zero-audit-failure.log").toPath());
+		CoreProbeLog.arm(settings(20, 90, 30, 150, 200, false));
+		Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), true));
+		java.lang.reflect.Field sink = CoreProbeLog.class.getDeclaredField("file");
+		sink.setAccessible(true);
+		Object normalSink = sink.get(null);
+		int[] writes = {0};
+		sink.set(null, new java.io.BufferedWriter(new java.io.Writer()
+		{
+			@Override public void write(char[] data, int offset, int length) throws java.io.IOException
+			{
+				if (++writes[0] == 2)
+				{
+					throw new java.io.IOException("test-only zero audit failure");
+				}
+			}
+			@Override public void flush() { }
+			@Override public void close() { }
+		}));
+		try
+		{
+			invokeIj(target, 0, 0, 0, 0, false);
+		}
+		finally
+		{
+			sink.set(null, normalSink);
+		}
+		for (int i = 1; i <= 4; i++)
+		{
+			assertEquals(0, target.getField("seen" + i).getInt(null));
+		}
+		assertEquals(1, target.getField("executions").getInt(null));
+		assertTrue("Entry observation must precede failed audit", writes[0] >= 2);
+	}
+
+	@Test
+	public void firstNaturalRequestRemainsUntouchedInOptInMode() throws Exception
 	{
 		CoreProbeLog.initialize(temporary.newFile("natural.log").toPath());
 		CoreProbeLog.arm(settings(20, 90, 30, 150, false));
 		assertIjOriginal(0, 20, 0, 0, false);
-		assertIjOriginal(0, 0, 0, 0, false);
+	}
+
+	@Test
+	public void zeroSignatureChangesOnlyIncomingFadeAndRunsOriginalOnce() throws Exception
+	{
+		for (int zeroFade : new int[]{0, 90, 200, 300})
+		{
+			Path log = temporary.newFile("zero-" + zeroFade + ".log").toPath();
+			CoreProbeLog.initialize(log);
+			CoreProbeLog.arm(settings(20, 90, 30, 150, zeroFade, false));
+			Class<?> target = define("ij", ProbeTransformer.instrument("ij", fixture("ij", false), true));
+			ArrayList<Integer> requests = invokeIj(target, 0, 0, 0, 0, false);
+			assertSame(requests, target.getField("seen0").get(null));
+			for (int i = 1; i <= 3; i++)
+			{
+				assertEquals(0, target.getField("seen" + i).getInt(null));
+			}
+			assertEquals(zeroFade, target.getField("seen4").getInt(null));
+			assertEquals(1, target.getField("executions").getInt(null));
+			String text = Files.readString(log);
+			assertTrue(text.contains("override=ZERO_TIMING_INCOMING_FADE"));
+			assertTrue(text.contains("originalTimings=[0,0,0,0]"));
+			assertTrue(text.contains("effectiveTimings=[0,0,0," + zeroFade + "]"));
+			assertFalse(text.contains("override=AREA_TIMINGS"));
+		}
 	}
 
 	@Test
@@ -190,10 +268,12 @@ public class ProbeTransformerTest
 		CoreProbeLog.initialize(temporary.newFile("nonmatches.log").toPath());
 		CoreProbeLog.arm(settings(20, 90, 30, 150, false));
 		assertIjOriginal(0, 60, 60, 0, true);
+		assertIjOriginal(0, 0, 0, 0, true);
 		assertIjOriginal(1, 60, 60, 0, false);
 		assertIjOriginal(0, 59, 60, 0, false);
 		assertIjOriginal(0, 60, 59, 0, false);
 		assertIjOriginal(0, 60, 60, 1, false);
+		assertIjOriginal(0, 0, 0, 1, false);
 	}
 
 	@Test
@@ -205,13 +285,14 @@ public class ProbeTransformerTest
 			{0, 60, 0, 120}, {0, 90, 0, 150}, {20, 90, 30, 150},
 			{0, 0, 0, 0}, {300, 300, 300, 300}})
 		{
-			CoreProbeAgent.AreaFadeSettings parsed = CoreProbeAgent.parseSettings(
+			CoreProbeAgent.TimingTestSettings parsed = CoreProbeAgent.parseSettings(
 				"area-incoming-fade-test:" + values[0] + ":" + values[1]
-					+ ":" + values[2] + ":" + values[3] + ":true");
+					+ ":" + values[2] + ":" + values[3] + ":200:true");
 			assertEquals(values[0], parsed.outgoingDelay);
 			assertEquals(values[1], parsed.outgoingFade);
 			assertEquals(values[2], parsed.incomingDelay);
 			assertEquals(values[3], parsed.incomingFade);
+			assertEquals(200, parsed.zeroTimingIncomingFade);
 			assertTrue(parsed.probeStreamVolume);
 		}
 		for (int slot = 0; slot < 4; slot++)
@@ -220,15 +301,22 @@ public class ProbeTransformerTest
 			{
 				String[] fields = {"0", "60", "0", "120"};
 				fields[slot] = bad;
-				String invalid = "area-incoming-fade-test:" + String.join(":", fields) + ":false";
+				String invalid = "area-incoming-fade-test:" + String.join(":", fields) + ":200:false";
 				assertThrows(invalid, IllegalArgumentException.class, () -> CoreProbeAgent.parseSettings(invalid));
 			}
 		}
+		for (String bad : new String[]{"-1", "301", "999999999999", "abc", "1.5", " 90", "01", ""})
+		{
+			String invalid = "area-incoming-fade-test:0:60:0:120:" + bad + ":false";
+			assertThrows(invalid, IllegalArgumentException.class, () -> CoreProbeAgent.parseSettings(invalid));
+		}
+		assertEquals(0, CoreProbeAgent.parseSettings("area-incoming-fade-test:0:60:0:120:0:false").zeroTimingIncomingFade);
+		assertEquals(300, CoreProbeAgent.parseSettings("area-incoming-fade-test:0:60:0:120:300:false").zeroTimingIncomingFade);
 		for (String invalid : new String[]{"area-incoming-fade-test", "area-incoming-fade-test:",
-			"area-incoming-fade-test:0:60:0:120:True",
-			"area-incoming-fade-test:0:60:0:120:1",
-			"area-incoming-fade-test:0:60:0:120",
-			"unknown:0:60:0:120:false"})
+			"area-incoming-fade-test:0:60:0:120:200:True",
+			"area-incoming-fade-test:0:60:0:120:200:1",
+			"area-incoming-fade-test:0:60:0:120:200",
+			"unknown:0:60:0:120:200:false"})
 		{
 			assertThrows(invalid, IllegalArgumentException.class, () -> CoreProbeAgent.parseSettings(invalid));
 		}
@@ -466,11 +554,18 @@ public class ProbeTransformerTest
 		assertEquals(1, target.getField("executions").getInt(null));
 	}
 
-	private static CoreProbeAgent.AreaFadeSettings settings(int outgoingDelay,
+	private static CoreProbeAgent.TimingTestSettings settings(int outgoingDelay,
 		int outgoingFade, int incomingDelay, int incomingFade, boolean volumeProbe)
 	{
-		return new CoreProbeAgent.AreaFadeSettings(outgoingDelay, outgoingFade,
-			incomingDelay, incomingFade, volumeProbe);
+		return settings(outgoingDelay, outgoingFade, incomingDelay, incomingFade, 200, volumeProbe);
+	}
+
+	private static CoreProbeAgent.TimingTestSettings settings(int outgoingDelay,
+		int outgoingFade, int incomingDelay, int incomingFade,
+		int zeroTimingIncomingFade, boolean volumeProbe)
+	{
+		return new CoreProbeAgent.TimingTestSettings(outgoingDelay, outgoingFade,
+			incomingDelay, incomingFade, zeroTimingIncomingFade, volumeProbe);
 	}
 
 	private static Class<?> define(String name, byte[] bytes)

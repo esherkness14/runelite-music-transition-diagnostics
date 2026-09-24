@@ -79,15 +79,23 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   returns, exceptions, and music state; no fade control or intentional delays.
   Keep the agent outside main/plugin artifacts and reject unknown client hashes
   or signatures. See `RESEARCH-NOTES.md` for the exact pinned artifact.
-- Experiment 4 established the opt-in `runAreaFadeTest` exception. The current
-  Experiment 7 tuning harness permits all four effective timings to be set from
-  0–300 native scheduler steps (defaults `[0,60,0,120]`), but only when
+- Experiment 4 established the opt-in `runAreaFadeTest` exception. Its existing
+  area branch permits all four effective timings to be set from 0–300 native
+  scheduler steps (defaults `[0,60,0,120]`), but only when
   `specialRoute == false` and the complete *original* `ij.af` tuple is exactly
-  `[0,60,60,0]`. Ordinary `run` remains observation-only. This signature is a
+  `[0,60,60,0]`. Ordinary `run` remains observation-only. This area signature is a
   controlled experiment, not the final area-detection architecture. Preserve
-  the version/hash/signature gates and never alter the natural `0,20,0,0` or
-  `0,0,0,0` signatures. All four effective values must come from one guarded
+  the version/hash/signature gates. The first natural `[0,20,0,0]` request
+  remains untouched. All four effective values must come from one guarded
   decision; audit failure must leave all four original values in place.
+- The next opt-in empirical shortcut also matches an ordinary
+  `specialRoute=false` original `[0,0,0,0]` request and changes only incoming
+  fade to `-PnaturalIncomingFade` (0–300, default 200). This deliberately
+  includes both currently observed zero-timing cases: startup-correlated first
+  music and the later natural next-song request. Log it as
+  `ZERO_TIMING_INCOMING_FADE`, **never** as `LOGIN` or `NATURAL`. It is not a
+  production classifier, and normal `run` remains observation-only. The
+  existing area override and its separate audit are unchanged.
 - Experiment 4 live tests found a probably audible but subtle 60-step incoming
   fade. Archive 151 appeared with `0,0,0,0` in natural progression and
   `0,60,60,0` at an area boundary: timings depend on request context. Leave
@@ -103,8 +111,8 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   `-PprobeStreamVolume=true` in the opt-in launcher. Treat setter calls as
   measurements, not proof of perceived loudness. This was an earlier experiment;
   the later preferred area tuple is `[0,200,200,200]`. Login/startup research is
-  now explicitly in scope; do not implement or live-test login fading without
-  authorization.
+  in scope, and the separately authorized opt-in zero-tuple test may affect
+  startup music. Do not add a distinct production login-fade path or UI yet.
 - The eventual plugin should have a master enable switch (disabled means **no
   native timing mutation**), four configurable area timings, and distinct
   `Restore Smooth Defaults` (`[0,200,200,200]`) and `Restore Vanilla Timings`
@@ -117,9 +125,9 @@ new evidence and revised hypotheses in `RESEARCH-NOTES.md`.
   obfuscated names or inventing `AREA`, `NATURAL`, `TELEPORT`, or `LOGIN`
   classifications. One scheduler hook sees multiple request origins but needs
   reliable context before the eventual plugin can apply separate replacement
-  and natural policies. Preserve the experimental area eligibility; do not
-  change natural requests until the two-request sequence is understood.
-  `RESEARCH-NOTES.md` records the current static trace and next read-only test.
+  and natural policies. The opt-in zero-tuple test is intentionally broader
+  and should be evaluated before deciding whether production needs finer
+  classification. `RESEARCH-NOTES.md` records the static trace and experiment.
 - Preserve Java 11 compatibility and the official `runelite/example-plugin`
   Gradle structure. Use `./gradlew build` (or `.\gradlew.bat build` on Windows)
   after code changes.

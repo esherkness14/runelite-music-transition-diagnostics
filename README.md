@@ -2,8 +2,8 @@
 
 A temporary RuneLite development plugin comparing area-triggered music
 replacement with natural end-of-track progression. The ordinary launcher is
-read-only. Experiment 7 uses the separate opt-in launcher to test an overlapping
-native crossfade at the verified request entry.
+read-only. A separate opt-in launcher tests two exact native timing signatures
+at the verified request entry; this remains a development experiment.
 
 Neither mode directly writes global volume/varps, selects tracks, runs scripts,
 or contains a geographic music map. The opt-in native fade timing naturally
@@ -49,11 +49,11 @@ the packet / `client.ia` path. Natural progression first requested archive 147
 with `0,20,0,0`, then about 1.18 seconds later archive 151 with `0,0,0,0`.
 Archive 147's content/role is unknown and is not labeled as silence.
 
-## Run Experiment 7 (opt-in area crossfade tuning)
+## Run the opt-in area and zero-tuple timing test
 
 ```powershell
 .\gradlew.bat runAreaFadeTest
-.\gradlew.bat runAreaFadeTest -PareaOutgoingDelay=0 -PareaOutgoingFade=90 -PareaIncomingDelay=0 -PareaIncomingFade=150
+.\gradlew.bat runAreaFadeTest -PareaOutgoingDelay=0 -PareaOutgoingFade=200 -PareaIncomingDelay=200 -PareaIncomingFade=200 -PnaturalIncomingFade=200
 .\gradlew.bat runAreaFadeTest -PprobeStreamVolume=true
 ```
 
@@ -65,24 +65,32 @@ out-of-range values fail before the client launches. These are scheduler steps,
 not milliseconds. Stream-volume tracing is off by default;
 `-PprobeStreamVolume=true` enables it for a separate measurement run. Only the
 exact flag values `true` and `false` are accepted.
+`-PnaturalIncomingFade` separately accepts 0 through 300 native steps and
+defaults to 200. The property name describes the intended listening test,
+not a verified natural-request classification.
 
-The harness retains all Experiment 3 logging and changes `ij.af` only when:
+The harness retains Experiment 3 logging. In this opt-in task only, it changes
+`ij.af` for two separate original signatures:
 
-- `specialRoute == false`, and
-- the complete original tuple is exactly `0,60,60,0`.
+- `specialRoute == false` and exact `[0,60,60,0]`: use the four configured
+  area values, audited as `override=AREA_TIMINGS`.
+- `specialRoute == false` and exact `[0,0,0,0]`: preserve the first three
+  zeroes and use `naturalIncomingFade` only as incoming fade, audited as
+  `override=ZERO_TIMING_INCOMING_FADE`.
 
-For that exact match only, the effective tuple is the four configured values
-in the order `[outgoingDelay,outgoingFade,incomingDelay,incomingFade]`. The
-default remains `[0,60,0,120]`; the custom command above produces
-`[0,90,0,150]`. Configuring the outgoing fade no longer requires changing the
-original eligibility match. The default requests the incoming start/fade task
-without the old 60-step wait so the fades can overlap; actual audio timing
-remains to be checked in a live test.
-The probe logs both `originalTimings=[0,60,60,0]` and
-`effectiveTimings=[<the four configured values>]`, and its `ARMED` line reports
-all four configured values and `probeStreamVolume`. Natural tuples
-`0,20,0,0` and `0,0,0,0`, special/jingle requests, and unrelated timings are
-untouched.
+The historical area defaults remain `[0,60,0,120]`. The custom command
+above requests the user's subjectively preferred `[0,200,200,200]` area
+handoff. The zero-tuple default effective values are `[0,0,0,200]`. Each
+accepted override logs its own `originalTimings` and `effectiveTimings`;
+the `ARMED` line reports both configurations and `probeStreamVolume`.
+`[0,20,0,0]`, special/jingle requests, and unrelated tuples stay untouched.
+Normal `run` never substitutes timings.
+
+The zero-tuple branch deliberately tests both currently observed ordinary
+`[0,0,0,0]` cases: startup-correlated first music and the later real next-song
+request during natural progression. It does **not** identify or label either
+one in code or logs. This is an empirical shortcut, not a production
+classifier; the live result will determine whether finer context is needed.
 
 The Experiment 4 live test successfully applied 60 steps at both Draynor
 directions and other tested boundaries involving archives 127, 151, and 107.
@@ -97,8 +105,9 @@ Experiment 5's sequential `[0,60,60,120]` result felt more gradual overall,
 and its outgoing fade sounded good, but the incoming entrance seemed stepped.
 Experiment 6's native setter trace showed a gradual incoming volume ramp, not
 an abrupt jump. The remaining 60-step incoming delay is the reason for testing
-overlap here. This signature match is a controlled experiment, not the final
-plugin's area-detection design. Login/startup fading remains a future question.
+overlap here. These signature matches are controlled experiments, not the
+final plugin's classification design. Separate production login handling
+remains future work.
 The user must perform any RuneScape test manually; build/tests do not launch
 or live-test the game.
 
@@ -110,11 +119,11 @@ Only when a volume trace is needed, explicitly enable it in the opt-in launcher:
 .\gradlew.bat runAreaFadeTest -PprobeStreamVolume=true
 ```
 
-With this option, after an accepted `0,60,60,0` override, the agent records calls to the
+With this option, after an accepted area or zero-tuple override, the agent records calls to the
 verified native `nu.az(int, int)` stream-volume setter for 4.5 seconds. Each
 `STREAM_VOLUME_WRITE` line includes a monotonic `nanoTime`, `elapsedNanos`,
 `requestedVolume`, `streamIdentity`, caller, and task label. The override line's
-`volumeWindow` number ties the writes to that area request. At most 512 setter
+`volumeWindow` number ties the writes to that accepted request. At most 512 setter
 lines are written per window; a `STREAM_VOLUME_LIMIT` marker indicates the cap.
 To reproduce the earlier Experiment 6 sequential tuple, also pass
 `-PareaIncomingDelay=60`; the command above uses the Experiment 7 default of 0.
@@ -127,8 +136,8 @@ smooth native ramp could still sound uneven because of the music itself.
 The live Experiment 6 trace showed a gradual incoming native volume ramp
 through intermediate values. The apparent jump was not an abrupt native setter
 write. Leave this high-volume synchronous logging off for subjective listening
-tests because it can affect timing. Login/startup fading remains a future
-question.
+tests because it can affect timing. A separate production login policy remains
+future work; the opt-in zero-tuple experiment may also fade startup music.
 
 No location is hard-coded in the plugin. Region IDs are metadata only; the
 Draynor boundary was already observed within a single RuneScape region.
@@ -165,13 +174,13 @@ may therefore disable this version-specific probe. Re-research that binary
 before changing the allowlist. Other agents/retransformation/custom classloaders
 are not supported. The `nu.az` hook is transformed only when
 `probeStreamVolume=true`; otherwise its bytecode is verified unchanged, including
-in the opt-in crossfade mode. Obfuscated alternate/copy
+in the opt-in timing-test mode. Obfuscated alternate/copy
 methods are not claimed to be covered.
 
-The opt-in mode, four 0–300 timing values, and volume-probe flag are validated
+The opt-in mode, five 0–300 timing values, and volume-probe flag are validated
 independently by Gradle and the agent. Unknown or invalid arguments fail closed.
 Normal `run` attaches with no behavior-changing mode; only `runAreaFadeTest`
-emits the narrowly scoped four-timing substitution.
+can substitute either exact ordinary timing signature.
 
 ## Plugin observations
 
@@ -242,6 +251,6 @@ Agent implementation/dependencies live only in the `coreProbe` source set;
 its tests live in `coreProbeTest`. Neither the ordinary plugin jar nor the
 example-style `shadowJar` includes the agent or its ASM dependencies. The
 `shadowJar`/IDE launcher does not automatically attach the agent: use Gradle
-`run` for observation or `runAreaFadeTest` for the explicit crossfade tuning mode.
+`run` for observation or `runAreaFadeTest` for the explicit timing experiment.
 No Gradle-cache or official jar is modified in place, and nothing is submitted
 upstream.

@@ -43,23 +43,23 @@ final class ProbeTransformer implements ClassFileTransformer
 	private final ClassLoader expectedLoader;
 	private final Map<String, byte[]> originals;
 	private final Map<String, byte[]> instrumented;
-	private final boolean areaFadeTest;
+	private final boolean timingTest;
 	private final boolean probeStreamVolume;
 	private volatile boolean disabled;
 
 	ProbeTransformer(Path jar, ClassLoader loader, Map<String, byte[]> originals,
-		boolean areaFadeTest, boolean probeStreamVolume)
+		boolean timingTest, boolean probeStreamVolume)
 	{
 		this.jar = jar;
 		this.expectedLoader = loader;
 		this.originals = originals;
-		this.areaFadeTest = areaFadeTest;
+		this.timingTest = timingTest;
 		this.probeStreamVolume = probeStreamVolume;
 		this.instrumented = new LinkedHashMap<>();
 		// Validate/prepare ALL five methods before registering ANY transformation.
 		for (String owner : TARGETS.keySet())
 		{
-			instrumented.put(owner, instrument(owner, originals.get(owner), areaFadeTest, probeStreamVolume));
+			instrumented.put(owner, instrument(owner, originals.get(owner), timingTest, probeStreamVolume));
 		}
 	}
 
@@ -103,12 +103,12 @@ final class ProbeTransformer implements ClassFileTransformer
 		return instrument(owner, original, false, false);
 	}
 
-	static byte[] instrument(String owner, byte[] original, boolean areaFadeTest)
+	static byte[] instrument(String owner, byte[] original, boolean timingTest)
 	{
-		return instrument(owner, original, areaFadeTest, false);
+		return instrument(owner, original, timingTest, false);
 	}
 
-	static byte[] instrument(String owner, byte[] original, boolean areaFadeTest,
+	static byte[] instrument(String owner, byte[] original, boolean timingTest,
 		boolean probeStreamVolume)
 	{
 		if (original == null || !TARGETS.containsKey(owner))
@@ -173,7 +173,7 @@ final class ProbeTransformer implements ClassFileTransformer
 			}
 			entry.add(new MethodInsnNode(Opcodes.INVOKESTATIC, LOGGER, "enter", LOG_DESCRIPTOR, false));
 		}
-		if (areaFadeTest && owner.equals("ij"))
+		if (timingTest && owner.equals("ij"))
 		{
 			// One guarded decision produces a four-int array. Nonmatches and audit
 			// failures return the four originals. The fixed-size array is unpacked
